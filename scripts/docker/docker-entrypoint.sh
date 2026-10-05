@@ -6,53 +6,32 @@ ulimit -Sn 10000
 # 获取传入的参数
 steam_cmd_path='/app/steamcmd'
 steam_dst_server='/app/dst-dedicated-server'
-data_dir='/app/data'
 
-# 确保持久化数据目录存在，并在其为空（例如首次挂载一个全新的空 volume）时
-# 从镜像内置的默认值播种 dst_config 和管理员账户文件，这样这一步与
-# /app/data 是否被挂载为 volume 无关，每次启动都会执行。
-mkdir -p "$data_dir"
-if [ ! -f "$data_dir/dst_config" ]; then
-  cp /app/docker_dst_config.default "$data_dir/dst_config"
-else
-  if ! grep -q "^persistent_storage_root=" "$data_dir/dst_config" || grep -q "^persistent_storage_root=[[:space:]]*$" "$data_dir/dst_config"; then
-    sed -i '/^persistent_storage_root=/d' "$data_dir/dst_config"
-    echo "persistent_storage_root=/app/data" >> "$data_dir/dst_config"
-  fi
-  if ! grep -q "^backup=" "$data_dir/dst_config" || grep -q "^backup=[[:space:]]*$" "$data_dir/dst_config"; then
-    sed -i '/^backup=/d' "$data_dir/dst_config"
-    echo "backup=/app/data/backup" >> "$data_dir/dst_config"
-  fi
-  if ! grep -q "^mod_download_path=" "$data_dir/dst_config" || grep -q "^mod_download_path=[[:space:]]*$" "$data_dir/dst_config"; then
-    sed -i '/^mod_download_path=/d' "$data_dir/dst_config"
-    echo "mod_download_path=/app/data/mod" >> "$data_dir/dst_config"
+mkdir -p "$steam_cmd_path"
+mkdir -p /root/.klei/DoNotStarveTogether/MyDediServer
+mkdir -p /app/backup
+mkdir -p /app/mod
+
+# 默认配置文件
+if [ ! -f /app/dst_config ]; then
+  if [ -f /app/docker_dst_config.default ]; then
+    cp /app/docker_dst_config.default /app/dst_config
+  elif [ -f /app/docker_dst_config ]; then
+    cp /app/docker_dst_config /app/dst_config
   fi
 fi
-if [ ! -f "$data_dir/password.txt" ]; then
-  echo "username=admin" >> "$data_dir/password.txt"
-  echo "password=123456" >> "$data_dir/password.txt"
-  echo "displayName=admin" >> "$data_dir/password.txt"
-  echo "photoURL=xxx" >> "$data_dir/password.txt"
-fi
-mkdir -p "$data_dir/backup"
-mkdir -p "$data_dir/mod"
-# 与 docker_dst_config 中的 persistent_storage_root=/app/data 和默认的
-# cluster=Cluster_1 保持一致（游戏本体自己会在这之下再建一层 DoNotStarveTogether
-# 目录），方便直接把已有存档挂载到这个固定路径上，而不需要在面板里修改
-# cluster 名称。
-mkdir -p "$data_dir/DoNotStarveTogether/Cluster_1"
 
-# 判断 steam_cmd_path 是否存在，不存在则创建
-if [ ! -d "$steam_cmd_path" ]; then
-  mkdir -p "$steam_cmd_path"
+# 初始管理员账户文件
+if [ ! -f /app/password.txt ]; then
+  echo "username=admin" >> /app/password.txt
+  echo "password=123456" >> /app/password.txt
+  echo "displayName=admin" >> /app/password.txt
+  echo "photoURL=xxx" >> /app/password.txt
 fi
 
 # 进入 steam_cmd_path 目录
 cd "$steam_cmd_path"
 
-# 镜像构建时已经内置了 steamcmd 和游戏本体，正常情况下下面两个循环会
-# 立即通过检查、不会真正下载。只有在构建时安装失败，或者把这两个目录
-# 挂载成了空 volume 时，才会在这里补装。
 retry=1
 while [ ! -d "${steam_cmd_path}" ] || [ ! -e "${steam_cmd_path}/steamcmd.sh" ]; do
   if [ $retry -gt 3 ]; then
@@ -78,11 +57,8 @@ while [ ! -e "${steam_dst_server}/bin/dontstarve_dedicated_server_nullrenderer" 
   ((retry++))
 done
 
-
-# 运行其他命令，这里只是做示例
 echo "SteamCMD installed at $steam_cmd_path"
 echo "SteamDST server installed at $steam_dst_server"
-
 
 cd /app
 exec ./dst-admin-go

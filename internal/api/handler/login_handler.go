@@ -15,14 +15,28 @@ import (
 	"gorm.io/gorm"
 )
 
-// passwordPath 账户信息文件的完整路径，与 dst_config 共用同一个数据目录
+// passwordPath 账户信息文件的完整路径
 func passwordPath() string {
-	return filepath.Join(config.Cfg.DataDir, "password.txt")
+	p := filepath.Join(config.Cfg.DataDir, "password.txt")
+	if fileUtils.Exists(p) {
+		return p
+	}
+	if fileUtils.Exists("./password.txt") {
+		return "./password.txt"
+	}
+	return p
 }
 
 // firstInitMarkerPath 首次初始化标记文件的完整路径
 func firstInitMarkerPath() string {
-	return filepath.Join(config.Cfg.DataDir, "first")
+	p := filepath.Join(config.Cfg.DataDir, "first")
+	if fileUtils.Exists(p) {
+		return p
+	}
+	if fileUtils.Exists("./first") {
+		return "./first"
+	}
+	return p
 }
 
 type LoginHandler struct {

@@ -56,11 +56,6 @@ func (p *LinuxProcess) launchLevel(clusterName, levelName string) error {
 		ugcDirectory = filepath.Join(cluster.Mod_download_path, "steamapps", "workshop")
 	}
 	persistent_storage_root := cluster.Persistent_storage_root
-	if persistent_storage_root == "" {
-		if fileUtils.Exists("/app/data/DoNotStarveTogether") || fileUtils.Exists("/app/data") {
-			persistent_storage_root = "/app/data"
-		}
-	}
 	conf_dir := cluster.Conf_dir
 	var startCmd = ""
 

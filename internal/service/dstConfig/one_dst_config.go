@@ -21,6 +21,9 @@ type OneDstConfig struct {
 
 func NewOneDstConfig(db *gorm.DB) OneDstConfig {
 	path := filepath.Join(config.Cfg.DataDir, DstConfigPath)
+	if !fileUtils.Exists(path) && fileUtils.Exists(DstConfigPath) {
+		path = DstConfigPath
+	}
 	return OneDstConfig{
 		db:            db,
 		dstConfigPath: path,
@@ -32,11 +35,6 @@ func (o *OneDstConfig) kleiBasePath(config DstConfig) string {
 	home, _ := os.UserHomeDir()
 
 	persistentStorageRoot := config.Persistent_storage_root
-	if persistentStorageRoot == "" {
-		if fileUtils.Exists("/app/data/DoNotStarveTogether") || fileUtils.Exists("/app/data") {
-			persistentStorageRoot = "/app/data"
-		}
-	}
 	confDir := config.Conf_dir
 	if persistentStorageRoot != "" {
 		if confDir == "" {
@@ -159,25 +157,21 @@ func (o *OneDstConfig) GetDstConfig(clusterName string) (DstConfig, error) {
 			}
 		}
 	}
-	// 设置默认值，与饥荒本体 -cluster 参数的默认值 "Cluster_1" 保持一致，
-	// 方便直接迁移使用原版默认目录名的已有存档
+	// 设置默认值，默认使用 MyDediServer
 	if dstConfig.Cluster == "" {
-		dstConfig.Cluster = "Cluster_1"
-	}
-	if dstConfig.Persistent_storage_root == "" {
-		if fileUtils.Exists("/app/data/DoNotStarveTogether") || fileUtils.Exists("/app/data") {
-			dstConfig.Persistent_storage_root = "/app/data"
-		}
+		dstConfig.Cluster = "MyDediServer"
 	}
 	if dstConfig.Backup == "" {
-		defaultPath := filepath.Join(o.kleiBasePath(dstConfig), "backup")
-		fileUtils.CreateDirIfNotExists(defaultPath)
-		dstConfig.Backup = defaultPath
+		dstConfig.Backup = "/app/backup"
 	}
 	if dstConfig.Mod_download_path == "" {
-		defaultPath := filepath.Join(o.kleiBasePath(dstConfig), "mod_config_download")
-		fileUtils.CreateDirIfNotExists(defaultPath)
-		dstConfig.Mod_download_path = defaultPath
+		dstConfig.Mod_download_path = "/app/mod"
+	}
+	if dstConfig.Steamcmd == "" {
+		dstConfig.Steamcmd = "/app/steamcmd"
+	}
+	if dstConfig.Force_install_dir == "" {
+		dstConfig.Force_install_dir = "/app/dst-dedicated-server"
 	}
 	if dstConfig.Ugc_directory == "" && dstConfig.Mod_download_path != "" {
 		dstConfig.Ugc_directory = filepath.Join(dstConfig.Mod_download_path, "steamapps", "workshop")
@@ -211,9 +205,6 @@ func (o *OneDstConfig) SaveDstConfig(clusterName string, dstConfig DstConfig) er
 	}
 	if dstConfig.Persistent_storage_root == "" {
 		dstConfig.Persistent_storage_root = oldDstConfig.Persistent_storage_root
-	}
-	if dstConfig.Persistent_storage_root == "" && (fileUtils.Exists("/app/data/DoNotStarveTogether") || fileUtils.Exists("/app/data")) {
-		dstConfig.Persistent_storage_root = "/app/data"
 	}
 	if dstConfig.Conf_dir == "" {
 		dstConfig.Conf_dir = oldDstConfig.Conf_dir

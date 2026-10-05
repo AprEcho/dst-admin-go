@@ -67,7 +67,7 @@ func (h *LevelLogHandler) Stream(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// 1️⃣ snapshot
+	// 1️⃣ snapshot：将全部 snapshot 行合并为一条或少量事件发送，避免前端 Monaco 每次收到单行都执行完整 AST 解析导致浏览器主线程卡死
 	serverLogPath := h.archive.ServerLogPath(clusterName, levelName)
 	lines, err := reader.Snapshot(serverLogPath, 100)
 	if err != nil {
@@ -75,12 +75,12 @@ func (h *LevelLogHandler) Stream(c *gin.Context) {
 		return
 	}
 
-	for _, line := range lines {
-		writeSSE(w, "log", line)
+	if len(lines) > 0 {
+		writeSSE(w, "log", strings.Join(lines, "\n"))
+		flusher.Flush()
 	}
-	flusher.Flush()
 
-	// 2️⃣ follow
+	// 2️⃣ follow：微批处理，遇到连续高频日志时合并发送，极大降低前端渲染压力
 	ch, cancel, err := reader.Follow(serverLogPath)
 	if err != nil {
 		writeSSE(w, "error", err.Error())
@@ -101,7 +101,21 @@ func (h *LevelLogHandler) Stream(c *gin.Context) {
 			if !ok {
 				return
 			}
-			writeSSE(w, "log", line)
+			batch := []string{line}
+			drain := true
+			for drain && len(batch) < 50 {
+				select {
+				case nextLine, nextOk := <-ch:
+					if !nextOk {
+						drain = false
+					} else {
+						batch = append(batch, nextLine)
+					}
+				default:
+					drain = false
+				}
+			}
+			writeSSE(w, "log", strings.Join(batch, "\n"))
 			flusher.Flush()
 
 		case <-heartbeat.C:

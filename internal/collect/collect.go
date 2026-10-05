@@ -25,8 +25,8 @@ var (
 	// 匹配 KuId 和 玩家昵称 (支持包含空格的昵称):
 	reClientAuth = regexp.MustCompile(`Client authenticated:\s*\((KU_[^)]+)\)\s+(.+)`)
 
-	// 匹配 SteamID: [Steam] Authenticated client '76561198xxxxxxxxx'
-	reSteamAuth = regexp.MustCompile(`Authenticated client\s*'(\d+)'`)
+	// 匹配 SteamID: 兼容 client / host / user 以及 SendUserDisconnect
+	reSteamAuth = regexp.MustCompile(`(?:(?:Authenticated\s+(?:client|host|user)|SendUserDisconnect for)\s*'|\[Steam\].*?')(\d+)'`)
 
 	// 匹配 Session 文件路径
 	reSession = regexp.MustCompile(`(?:Resuming|Serializing) user:\s*session/(.+)`)
@@ -312,12 +312,12 @@ func (c *Collect) handleServerLogLine(text string) {
 		return
 	}
 
-	// 3. 匹配 SteamId: Authenticated client '76561198xxxxxxxxx'
+	// 3. 匹配 SteamId: Authenticated client/host/user '76561198xxxxxxxxx'
 	if m := reSteamAuth.FindStringSubmatch(text); len(m) >= 2 {
 		steamId := m[1]
 		log.Println("[Collector] 捕获 SteamId:", steamId)
 		var connect model.Connect
-		err := database.Db.Order("id desc").Last(&connect).Error
+		err := database.Db.Order("id desc").First(&connect).Error
 		if err == nil && connect.ID != 0 {
 			connect.SteamId = steamId
 			database.Db.Save(&connect)
@@ -327,6 +327,10 @@ func (c *Collect) handleServerLogLine(text string) {
 			if err := database.Db.Where("steam_id = '' OR steam_id IS NULL").Order("id desc").First(&lastLog).Error; err == nil && lastLog.ID != 0 {
 				lastLog.SteamId = steamId
 				database.Db.Save(&lastLog)
+				log.Printf("[Collector] 成功为玩家 %s (ID=%d) 补充 SteamId: %s\n", lastLog.Name, lastLog.ID, steamId)
+				if lastLog.KuId != "" {
+					database.Db.Model(&model.Connect{}).Where("ku_id = ?", lastLog.KuId).Update("steam_id", steamId)
+				}
 			}
 		}
 		return
@@ -336,9 +340,12 @@ func (c *Collect) handleServerLogLine(text string) {
 	if m := reSession.FindStringSubmatch(text); len(m) >= 2 {
 		sessionFile := m[1]
 		var connect model.Connect
-		err := database.Db.Where("cluster_name = ?", c.clusterName).Last(&connect).Error
+		err := database.Db.Order("id desc").First(&connect).Error
 		if err == nil && connect.ID != 0 {
 			connect.SessionFile = sessionFile
+			if strings.HasPrefix(sessionFile, "765611") && len(sessionFile) == 17 && connect.SteamId == "" {
+				connect.SteamId = sessionFile
+			}
 			database.Db.Save(&connect)
 		}
 		return

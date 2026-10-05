@@ -291,26 +291,20 @@ type HomeConfigVO struct {
 }
 
 func (p *GameConfig) GetHomeConfig(clusterName string) (HomeConfigVO, error) {
-	clusterToken, err := p.GetClusterToken(clusterName)
-	if err != nil {
-		return HomeConfigVO{}, err
-	}
-	clusterIni, err := p.GetClusterIni(clusterName)
-	if err != nil {
-		return HomeConfigVO{}, err
-	}
+	clusterToken, _ := p.GetClusterToken(clusterName)
+	clusterIni, _ := p.GetClusterIni(clusterName)
+
 	masterData, err := fileUtils.ReadFile(p.archive.DataFilePath(clusterName, "Master", "leveldataoverride.lua"))
-	if err != nil {
-		return HomeConfigVO{}, err
+	if err != nil || strings.TrimSpace(masterData) == "" || !strings.Contains(masterData, "location") {
+		masterData, _ = fileUtils.ReadFile("./static/Master/leveldataoverride.lua")
 	}
+
 	cavesData, err := fileUtils.ReadFile(p.archive.DataFilePath(clusterName, "Caves", "leveldataoverride.lua"))
-	if err != nil {
-		return HomeConfigVO{}, err
+	if err != nil || strings.TrimSpace(cavesData) == "" || !strings.Contains(cavesData, "location") {
+		cavesData, _ = fileUtils.ReadFile("./static/Caves/leveldataoverride.lua")
 	}
-	modData, err := fileUtils.ReadFile(p.archive.DataFilePath(clusterName, "Master", "modoverrides.lua"))
-	if err != nil {
-		return HomeConfigVO{}, err
-	}
+
+	modData, _ := fileUtils.ReadFile(p.archive.DataFilePath(clusterName, "Master", "modoverrides.lua"))
 
 	homeConfigVo := HomeConfigVO{
 		ClusterIntention:   clusterIni.ClusterIntention,
@@ -332,6 +326,51 @@ func (p *GameConfig) GetHomeConfig(clusterName string) (HomeConfigVO, error) {
 }
 
 func (p *GameConfig) SaveConfig(clusterName string, homeConfig HomeConfigVO) {
+	// 1. 保存 cluster.ini
+	clusterIni, err := p.GetClusterIni(clusterName)
+	if err == nil {
+		if homeConfig.ClusterName != "" {
+			clusterIni.ClusterName = homeConfig.ClusterName
+		}
+		clusterIni.ClusterDescription = homeConfig.ClusterDescription
+		clusterIni.ClusterPassword = homeConfig.ClusterPassword
+		if homeConfig.ClusterIntention != "" {
+			clusterIni.ClusterIntention = homeConfig.ClusterIntention
+		}
+		if homeConfig.GameMode != "" {
+			clusterIni.GameMode = homeConfig.GameMode
+		}
+		clusterIni.Pvp = homeConfig.Pvp
+		if homeConfig.MaxPlayers > 0 {
+			clusterIni.MaxPlayers = homeConfig.MaxPlayers
+		}
+		if homeConfig.MaxSnapshots > 0 {
+			clusterIni.MaxSnapshots = homeConfig.MaxSnapshots
+		}
+		clusterIni.PauseWhenNobody = homeConfig.PauseWhenNobody
+		clusterIni.VoteEnabled = homeConfig.VoteEnabled
+
+		_ = p.SaveClusterIni(clusterName, &clusterIni)
+	}
+
+	// 2. 保存 cluster_token.txt
+	if homeConfig.Token != "" {
+		_ = p.SaveClusterToken(clusterName, homeConfig.Token)
+	}
+
+	// 3. 保存世界地图配置
+	if homeConfig.MasterMapData != "" {
+		masterPath := filepath.Join(p.archive.ClusterPath(clusterName), "Master")
+		_ = fileUtils.CreateDirIfNotExists(masterPath)
+		_ = fileUtils.WriterTXT(filepath.Join(masterPath, "leveldataoverride.lua"), homeConfig.MasterMapData)
+	}
+	if homeConfig.CavesMapData != "" {
+		cavesPath := filepath.Join(p.archive.ClusterPath(clusterName), "Caves")
+		_ = fileUtils.CreateDirIfNotExists(cavesPath)
+		_ = fileUtils.WriterTXT(filepath.Join(cavesPath, "leveldataoverride.lua"), homeConfig.CavesMapData)
+	}
+
+	// 4. 保存模组配置
 	modConfig := homeConfig.ModData
 	if modConfig != "" {
 		config, _ := p.levelConfigUtils.GetLevelConfig(clusterName)

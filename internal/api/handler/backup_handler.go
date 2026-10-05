@@ -31,6 +31,7 @@ func (h *BackupHandler) RegisterRoute(router *gin.RouterGroup) {
 	router.GET("/api/game/backup/download", h.DownloadBackup)
 	router.POST("/api/game/backup/upload", h.UploadBackup)
 	router.GET("/backup/restore", h.RestoreBackup)
+	router.GET("/api/game/backup/restore", h.RestoreBackup)
 	router.POST("/api/game/backup/snapshot/setting", h.SaveBackupSnapshotsSetting)
 	router.GET("/api/game/backup/snapshot/setting", h.GetBackupSnapshotsSetting)
 	router.GET("/api/game/backup/snapshot/list", h.BackupSnapshotsList)

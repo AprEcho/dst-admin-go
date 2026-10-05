@@ -32,6 +32,11 @@ func (o *OneDstConfig) kleiBasePath(config DstConfig) string {
 	home, _ := os.UserHomeDir()
 
 	persistentStorageRoot := config.Persistent_storage_root
+	if persistentStorageRoot == "" {
+		if fileUtils.Exists("/app/data/DoNotStarveTogether") || fileUtils.Exists("/app/data") {
+			persistentStorageRoot = "/app/data"
+		}
+	}
 	confDir := config.Conf_dir
 	if persistentStorageRoot != "" {
 		if confDir == "" {
@@ -159,6 +164,11 @@ func (o *OneDstConfig) GetDstConfig(clusterName string) (DstConfig, error) {
 	if dstConfig.Cluster == "" {
 		dstConfig.Cluster = "Cluster_1"
 	}
+	if dstConfig.Persistent_storage_root == "" {
+		if fileUtils.Exists("/app/data/DoNotStarveTogether") || fileUtils.Exists("/app/data") {
+			dstConfig.Persistent_storage_root = "/app/data"
+		}
+	}
 	if dstConfig.Backup == "" {
 		defaultPath := filepath.Join(o.kleiBasePath(dstConfig), "backup")
 		fileUtils.CreateDirIfNotExists(defaultPath)
@@ -198,6 +208,21 @@ func (o *OneDstConfig) SaveDstConfig(clusterName string, dstConfig DstConfig) er
 	}
 	if dstConfig.Mod_download_path == "" {
 		dstConfig.Mod_download_path = oldDstConfig.Mod_download_path
+	}
+	if dstConfig.Persistent_storage_root == "" {
+		dstConfig.Persistent_storage_root = oldDstConfig.Persistent_storage_root
+	}
+	if dstConfig.Persistent_storage_root == "" && (fileUtils.Exists("/app/data/DoNotStarveTogether") || fileUtils.Exists("/app/data")) {
+		dstConfig.Persistent_storage_root = "/app/data"
+	}
+	if dstConfig.Conf_dir == "" {
+		dstConfig.Conf_dir = oldDstConfig.Conf_dir
+	}
+	if dstConfig.Ugc_directory == "" {
+		dstConfig.Ugc_directory = oldDstConfig.Ugc_directory
+	}
+	if dstConfig.DoNotStarveServerDirectory == "" {
+		dstConfig.DoNotStarveServerDirectory = oldDstConfig.DoNotStarveServerDirectory
 	}
 
 	err = fileUtils.WriterLnFile(o.dstConfigPath, []string{

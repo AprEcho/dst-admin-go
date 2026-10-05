@@ -14,6 +14,19 @@ data_dir='/app/data'
 mkdir -p "$data_dir"
 if [ ! -f "$data_dir/dst_config" ]; then
   cp /app/docker_dst_config.default "$data_dir/dst_config"
+else
+  if ! grep -q "^persistent_storage_root=" "$data_dir/dst_config" || grep -q "^persistent_storage_root=[[:space:]]*$" "$data_dir/dst_config"; then
+    sed -i '/^persistent_storage_root=/d' "$data_dir/dst_config"
+    echo "persistent_storage_root=/app/data" >> "$data_dir/dst_config"
+  fi
+  if ! grep -q "^backup=" "$data_dir/dst_config" || grep -q "^backup=[[:space:]]*$" "$data_dir/dst_config"; then
+    sed -i '/^backup=/d' "$data_dir/dst_config"
+    echo "backup=/app/data/backup" >> "$data_dir/dst_config"
+  fi
+  if ! grep -q "^mod_download_path=" "$data_dir/dst_config" || grep -q "^mod_download_path=[[:space:]]*$" "$data_dir/dst_config"; then
+    sed -i '/^mod_download_path=/d' "$data_dir/dst_config"
+    echo "mod_download_path=/app/data/mod" >> "$data_dir/dst_config"
+  fi
 fi
 if [ ! -f "$data_dir/password.txt" ]; then
   echo "username=admin" >> "$data_dir/password.txt"

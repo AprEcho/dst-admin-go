@@ -79,8 +79,21 @@ func (l *LevelService) GetLevel(clusterName string, levelName string) levelConfi
 	// 读取 leveldataoverride.lua
 	lPath := filepath.Join(levelFolderPath, "leveldataoverride.lua")
 	leveldataoverride, err := fileUtils.ReadFile(lPath)
-	if err != nil {
-		leveldataoverride = "return {}"
+	if err != nil || strings.TrimSpace(leveldataoverride) == "" || !strings.Contains(leveldataoverride, "location") {
+		isCave := strings.EqualFold(levelName, "Caves") || strings.Contains(strings.ToLower(levelName), "cave") || strings.Contains(name, "洞穴")
+		templatePath := "./static/Master/leveldataoverride.lua"
+		if isCave {
+			templatePath = "./static/Caves/leveldataoverride.lua"
+		}
+		tplContent, tplErr := fileUtils.ReadFile(templatePath)
+		if tplErr == nil && tplContent != "" {
+			leveldataoverride = tplContent
+			if fileUtils.Exists(levelFolderPath) {
+				_ = fileUtils.WriterTXT(lPath, leveldataoverride)
+			}
+		} else {
+			leveldataoverride = "return {}"
+		}
 	}
 
 	// 读取 modoverrides.lua
@@ -249,6 +262,18 @@ func (l *LevelService) initLevel(levelFolderPath string, level *levelConfig.Leve
 	fileUtils.CreateFileIfNotExists(lPath)
 	fileUtils.CreateFileIfNotExists(mPath)
 	fileUtils.CreateFileIfNotExists(sPath)
+
+	if strings.TrimSpace(level.Leveldataoverride) == "" || !strings.Contains(level.Leveldataoverride, "location") {
+		isCave := strings.EqualFold(level.Uuid, "Caves") || strings.Contains(strings.ToLower(level.Uuid), "cave") || strings.Contains(level.LevelName, "洞穴")
+		templatePath := "./static/Master/leveldataoverride.lua"
+		if isCave {
+			templatePath = "./static/Caves/leveldataoverride.lua"
+		}
+		tplContent, err := fileUtils.ReadFile(templatePath)
+		if err == nil && tplContent != "" {
+			level.Leveldataoverride = tplContent
+		}
+	}
 
 	fileUtils.WriterTXT(lPath, level.Leveldataoverride)
 	fileUtils.WriterTXT(mPath, level.Modoverrides)

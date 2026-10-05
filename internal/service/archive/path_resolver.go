@@ -40,6 +40,11 @@ func (r *PathResolver) KleiBasePath(clusterName string) string {
 		log.Panic(err)
 	}
 	persistentStorageRoot := config.Persistent_storage_root
+	if persistentStorageRoot == "" {
+		if fileUtils.Exists("/app/data/DoNotStarveTogether") || fileUtils.Exists("/app/data") {
+			persistentStorageRoot = "/app/data"
+		}
+	}
 	confDir := config.Conf_dir
 	if persistentStorageRoot != "" {
 		if confDir == "" {

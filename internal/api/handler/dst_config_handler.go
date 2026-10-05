@@ -83,9 +83,17 @@ func (h *DstConfigHandler) SaveDstConfig(ctx *gin.Context) {
 	}
 	clusterPath := h.archive.ClusterPath(config.Cluster)
 	collect.Collector.ReCollect(clusterPath, config.Cluster)
+	clusterName := config.Cluster
+	if clusterName == "" {
+		clusterName = context.GetClusterName(ctx)
+	}
+	savedConfig, err := h.dstConfig.GetDstConfig(clusterName)
+	if err != nil {
+		savedConfig = config
+	}
 	ctx.JSON(http.StatusOK, response.Response{
 		Code: 200,
 		Msg:  "DstConfig saved successfully",
-		Data: config,
+		Data: savedConfig,
 	})
 }

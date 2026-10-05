@@ -142,11 +142,15 @@ func (p *LevelConfigUtils) GetLevelConfig(clusterName string) (*LevelConfig, err
 		}
 	} else if len(config.LevelList) == 0 {
 		// 磁盘上既没有 Master 也没有任何关卡配置时，初始化默认 Master
+		masterLevelData, _ := fileUtils.ReadFile("./static/Master/leveldataoverride.lua")
+		if masterLevelData == "" {
+			masterLevelData = "return {}"
+		}
 		master := LevelInfo{
 			IsMaster:          true,
 			LevelName:         "地面",
 			Uuid:              "Master",
-			Leveldataoverride: "return {}",
+			Leveldataoverride: masterLevelData,
 			Modoverrides:      "return {}",
 			ServerIni:         NewMasterServerIni(),
 		}

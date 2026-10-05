@@ -4,7 +4,7 @@
 FROM node:20-alpine AS frontend-builder
 WORKDIR /web
 RUN apk add --no-cache git
-ARG FRONTEND_REPO=https://github.com/carrot-hu23/dst-manage-web2.git
+ARG FRONTEND_REPO=https://github.com/AprEcho/dst-manage-web.git
 ARG FRONTEND_REF=main
 RUN git clone --depth 1 -b ${FRONTEND_REF} ${FRONTEND_REPO} . && \
     npm config set registry https://registry.npmmirror.com && \

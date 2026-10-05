@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/memstore"
+	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	"github.com/swaggo/gin-swagger"
@@ -34,7 +34,7 @@ import (
 
 func NewRoute(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	app := gin.Default()
-	store := memstore.NewStore([]byte("secret"))
+	store := cookie.NewStore([]byte("dst-admin-go-secret-session-key"))
 	store.Options(sessions.Options{
 		Path:     "/",
 		MaxAge:   int(60 * 24 * 7 * time.Minute.Seconds()),

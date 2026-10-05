@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type PlayerLogHandler struct {
@@ -64,42 +65,49 @@ func (l *PlayerLogHandler) PlayerLogQueryPage(ctx *gin.Context) {
 		size = 10
 	}
 
-	tx := database.Db.Model(&model.PlayerLog{})
-
-	if name, isExist := ctx.GetQuery("name"); isExist && strings.TrimSpace(name) != "" {
-		tx = tx.Where("name LIKE ?", "%"+strings.TrimSpace(name)+"%")
-	}
-	if kuId, isExist := ctx.GetQuery("kuId"); isExist && strings.TrimSpace(kuId) != "" {
-		tx = tx.Where("ku_id LIKE ?", "%"+strings.TrimSpace(kuId)+"%")
-	}
-	if steamId, isExist := ctx.GetQuery("steamId"); isExist && strings.TrimSpace(steamId) != "" {
-		tx = tx.Where("steam_id LIKE ? OR steamId LIKE ?", "%"+strings.TrimSpace(steamId)+"%", "%"+strings.TrimSpace(steamId)+"%")
-	}
-	if role, isExist := ctx.GetQuery("role"); isExist && strings.TrimSpace(role) != "" {
-		tx = tx.Where("role LIKE ?", "%"+strings.TrimSpace(role)+"%")
-	}
-	if action, isExist := ctx.GetQuery("action"); isExist && strings.TrimSpace(action) != "" {
-		tx = tx.Where("action LIKE ?", "%"+strings.TrimSpace(action)+"%")
-	}
-	if ip, isExist := ctx.GetQuery("ip"); isExist && strings.TrimSpace(ip) != "" {
-		tx = tx.Where("ip LIKE ?", "%"+strings.TrimSpace(ip)+"%")
-	}
-	if clusterName, isExist := ctx.GetQuery("clusterName"); isExist && strings.TrimSpace(clusterName) != "" {
-		tx = tx.Where("cluster_name = ?", strings.TrimSpace(clusterName))
+	buildQuery := func() *gorm.DB {
+		tx := database.Db.Model(&model.PlayerLog{})
+		if name, isExist := ctx.GetQuery("name"); isExist && strings.TrimSpace(name) != "" {
+			tx = tx.Where("name LIKE ?", "%"+strings.TrimSpace(name)+"%")
+		}
+		if kuId, isExist := ctx.GetQuery("kuId"); isExist && strings.TrimSpace(kuId) != "" {
+			tx = tx.Where("ku_id LIKE ?", "%"+strings.TrimSpace(kuId)+"%")
+		}
+		if steamId, isExist := ctx.GetQuery("steamId"); isExist && strings.TrimSpace(steamId) != "" {
+			tx = tx.Where("steam_id LIKE ? OR steamId LIKE ?", "%"+strings.TrimSpace(steamId)+"%", "%"+strings.TrimSpace(steamId)+"%")
+		}
+		if role, isExist := ctx.GetQuery("role"); isExist && strings.TrimSpace(role) != "" {
+			tx = tx.Where("role LIKE ?", "%"+strings.TrimSpace(role)+"%")
+		}
+		if action, isExist := ctx.GetQuery("action"); isExist && strings.TrimSpace(action) != "" {
+			tx = tx.Where("action LIKE ?", "%"+strings.TrimSpace(action)+"%")
+		}
+		if ip, isExist := ctx.GetQuery("ip"); isExist && strings.TrimSpace(ip) != "" {
+			tx = tx.Where("ip LIKE ?", "%"+strings.TrimSpace(ip)+"%")
+		}
+		if clusterName, isExist := ctx.GetQuery("clusterName"); isExist && strings.TrimSpace(clusterName) != "" {
+			tx = tx.Where("cluster_name = ?", strings.TrimSpace(clusterName))
+		}
+		return tx
 	}
 
 	var total int64
-	tx.Count(&total)
+	buildQuery().Count(&total)
 
 	playerLogs := make([]model.PlayerLog, 0)
-	if err := tx.Order("created_at desc").Limit(size).Offset((page - 1) * size).Find(&playerLogs).Error; err != nil {
-		fmt.Println("查询玩家日志失败:", err)
+	if err := buildQuery().Order("id desc").Limit(size).Offset((page - 1) * size).Find(&playerLogs).Error; err != nil {
+		log.Println("查询玩家日志失败:", err)
 	}
 
 	totalPages := total / int64(size)
 	if total%int64(size) != 0 {
 		totalPages++
 	}
+
+	// 强制设置防缓存响应头，杜绝任何浏览器缓存
+	ctx.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+	ctx.Header("Pragma", "no-cache")
+	ctx.Header("Expires", "0")
 
 	ctx.JSON(http.StatusOK, response.Response{
 		Code: 200,
@@ -192,6 +200,9 @@ func (l *PlayerLogHandler) DeletePlayerLog(ctx *gin.Context) {
 		return
 	}
 
+	ctx.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+	ctx.Header("Pragma", "no-cache")
+	ctx.Header("Expires", "0")
 	response.OkWithMessage("删除成功", ctx)
 }
 
@@ -210,5 +221,8 @@ func (l *PlayerLogHandler) DeletePlayerLogAll(ctx *gin.Context) {
 		return
 	}
 
+	ctx.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+	ctx.Header("Pragma", "no-cache")
+	ctx.Header("Expires", "0")
 	response.OkWithMessage("清空成功", ctx)
 }

@@ -19,6 +19,8 @@ import (
 	"dst-admin-go/internal/service/player"
 	"dst-admin-go/internal/service/schedule"
 	"dst-admin-go/internal/service/update"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/gin-contrib/sessions"
@@ -52,12 +54,14 @@ func NewRoute(cfg *config.Config, db *gorm.DB) *gin.Engine {
 }
 
 func initCollectors(archive *archive.PathResolver, dstConfigService dstConfig.Config) {
-	getDstConfig, err := dstConfigService.GetDstConfig("MyDediServer")
-	if err != nil {
-		return
+	clusterName := "MyDediServer"
+	getDstConfig, err := dstConfigService.GetDstConfig(clusterName)
+	if err == nil && strings.TrimSpace(getDstConfig.Cluster) != "" {
+		clusterName = strings.TrimSpace(getDstConfig.Cluster)
 	}
-	clusterName := getDstConfig.Cluster
-	newCollect := collect.NewCollect(archive.ClusterPath(clusterName), clusterName)
+	clusterPath := archive.ClusterPath(clusterName)
+	log.Printf("[Collector] 初始化日志监听器, 集群: %s, 路径: %s\n", clusterName, clusterPath)
+	newCollect := collect.NewCollect(clusterPath, clusterName)
 	collect.Collector = newCollect
 	collect.Collector.StartCollect()
 }
@@ -68,21 +72,43 @@ func RegisterStaticFile(app *gin.Engine) {
 		if r := recover(); r != nil {
 		}
 	}()
-	app.Use(func(context *gin.Context) {
-		context.Writer.Header().Set("Cache-Control", "public, max-age=30672000")
+
+	staticCache := func(c *gin.Context) {
+		c.Header("Cache-Control", "public, max-age=31536000")
+		c.Next()
+	}
+
+	assetsGroup := app.Group("/assets", staticCache)
+	assetsGroup.Static("", "./dist/assets")
+
+	miscGroup := app.Group("/misc", staticCache)
+	miscGroup.Static("", "./dist/misc")
+
+	staticJsGroup := app.Group("/static/js", staticCache)
+	staticJsGroup.Static("", "./dist/static/js")
+
+	staticCssGroup := app.Group("/static/css", staticCache)
+	staticCssGroup.Static("", "./dist/static/css")
+
+	staticImgGroup := app.Group("/static/img", staticCache)
+	staticImgGroup.Static("", "./dist/static/img")
+
+	staticFontsGroup := app.Group("/static/fonts", staticCache)
+	staticFontsGroup.Static("", "./dist/static/fonts")
+
+	staticMediaGroup := app.Group("/static/media", staticCache)
+	staticMediaGroup.Static("", "./dist/static/media")
+
+	app.StaticFile("/favicon.ico", "./dist/favicon.ico")
+	app.StaticFile("/asset-manifest.json", "./dist/asset-manifest.json")
+
+	// 首页入口文件 index.html 绝不能长久缓存，必须每次重新验证
+	app.GET("/", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
+		c.File("./dist/index.html")
 	})
-	app.LoadHTMLGlob("dist/index.html") // 添加入口index.html
-	//r.LoadHTMLFiles("dist//*") // 添加资源路径
-	app.Static("/assets", "./dist/assets")
-	app.Static("/misc", "./dist/misc")
-	app.Static("/static/js", "./dist/static/js")                         // 添加资源路径
-	app.Static("/static/css", "./dist/static/css")                       // 添加资源路径
-	app.Static("/static/img", "./dist/static/img")                       // 添加资源路径
-	app.Static("/static/fonts", "./dist/static/fonts")                   // 添加资源路径
-	app.Static("/static/media", "./dist/static/media")                   // 添加资源路径
-	app.StaticFile("/favicon.ico", "./dist/favicon.ico")                 // 添加资源路径
-	app.StaticFile("/asset-manifest.json", "./dist/asset-manifest.json") // 添加资源路径
-	app.StaticFile("/", "./dist/index.html")
 }
 
 func Register(cfg *config.Config, db *gorm.DB, router *gin.RouterGroup) {
@@ -127,6 +153,13 @@ func Register(cfg *config.Config, db *gorm.DB, router *gin.RouterGroup) {
 	scheduleHandler := handler.NewScheduleHandler(scheduleService)
 
 	// 中间件
+	// 针对所有 API 路由强制设置无缓存响应头，杜绝浏览器对 GET 请求产生任何 disk/memory cache
+	router.Use(func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
+		c.Next()
+	})
 	router.Use(middleware.Authentication(loginService))
 	router.Use(middleware.ClusterMiddleware(dstConfigService))
 

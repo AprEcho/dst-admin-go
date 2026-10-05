@@ -46,29 +46,61 @@ type Collect struct {
 	lastIncomingTime  time.Time
 }
 
-func NewCollect(baseLogPath string, clusterName string) *Collect {
-	masterDir := "Master"
-	if !fileUtils.Exists(filepath.Join(baseLogPath, "Master")) && fileUtils.Exists(filepath.Join(baseLogPath, "master")) {
-		masterDir = "master"
-	}
-	cavesDir := "Caves"
-	if !fileUtils.Exists(filepath.Join(baseLogPath, "Caves")) && fileUtils.Exists(filepath.Join(baseLogPath, "caves")) {
-		cavesDir = "caves"
+func getCandidateServerLogs(baseLogPath string) []string {
+	var list []string
+	seen := make(map[string]bool)
+	add := func(sub string) {
+		p := filepath.Join(baseLogPath, sub, "server_log.txt")
+		if !seen[p] {
+			seen[p] = true
+			list = append(list, p)
+		}
 	}
 
-	severLogList := []string{
-		filepath.Join(baseLogPath, masterDir, "server_log.txt"),
-		filepath.Join(baseLogPath, cavesDir, "server_log.txt"),
+	for _, dir := range []string{"Master", "master", "Caves", "caves"} {
+		if fileUtils.Exists(filepath.Join(baseLogPath, dir)) {
+			add(dir)
+		}
 	}
-	serverChatLogList := []string{
-		filepath.Join(baseLogPath, masterDir, "server_chat_log.txt"),
+	if len(list) == 0 {
+		add("Master")
+		add("Caves")
 	}
+	return list
+}
+
+func getCandidateServerChatLogs(baseLogPath string) []string {
+	var list []string
+	seen := make(map[string]bool)
+	add := func(sub string) {
+		p := filepath.Join(baseLogPath, sub, "server_chat_log.txt")
+		if !seen[p] {
+			seen[p] = true
+			list = append(list, p)
+		}
+	}
+
+	for _, dir := range []string{"Master", "master", "Caves", "caves"} {
+		if fileUtils.Exists(filepath.Join(baseLogPath, dir)) {
+			add(dir)
+		}
+	}
+	if len(list) == 0 {
+		add("Master")
+		add("Caves")
+	}
+	return list
+}
+
+func NewCollect(baseLogPath string, clusterName string) *Collect {
+	severLogList := getCandidateServerLogs(baseLogPath)
+	serverChatLogList := getCandidateServerChatLogs(baseLogPath)
 	total := len(severLogList) + len(serverChatLogList)
 	collect := &Collect{
 		state:             make(chan int, 1),
 		severLogList:      severLogList,
 		serverChatLogList: serverChatLogList,
-		stop:              make(chan bool, total),
+		stop:              make(chan bool),
 		length:            total,
 		clusterName:       clusterName,
 	}
@@ -77,24 +109,40 @@ func NewCollect(baseLogPath string, clusterName string) *Collect {
 }
 
 func (c *Collect) Stop() {
-	close(c.stop)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stop != nil {
+		select {
+		case <-c.stop:
+		default:
+			close(c.stop)
+		}
+	}
 }
 
 func (c *Collect) ReCollect(baseLogPath, clusterName string) {
-	for i := 0; i < c.length; i++ {
-		c.stop <- true
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// 优雅通知上一代监听器退出
+	if c.stop != nil {
+		select {
+		case <-c.stop:
+		default:
+			close(c.stop)
+		}
 	}
-	c.severLogList = []string{
-		filepath.Join(baseLogPath, "Master", "server_log.txt"),
-		filepath.Join(baseLogPath, "Caves", "server_log.txt"),
-	}
-	c.serverChatLogList = []string{
-		filepath.Join(baseLogPath, "Master", "server_chat_log.txt"),
-	}
+
+	c.severLogList = getCandidateServerLogs(baseLogPath)
+	c.serverChatLogList = getCandidateServerChatLogs(baseLogPath)
 	c.length = len(c.severLogList) + len(c.serverChatLogList)
-	c.stop = make(chan bool, c.length)
+	c.stop = make(chan bool)
 	c.clusterName = clusterName
-	c.state <- 1
+
+	select {
+	case c.state <- 1:
+	default:
+	}
 }
 
 func (c *Collect) StartCollect() {
@@ -102,15 +150,20 @@ func (c *Collect) StartCollect() {
 		for {
 			select {
 			case <-c.state:
-				// 采集
-				for _, s := range c.severLogList {
-					go c.tailServeLog(s)
+				c.mu.Lock()
+				stopChan := c.stop
+				severLogList := append([]string{}, c.severLogList...)
+				serverChatLogList := append([]string{}, c.serverChatLogList...)
+				c.mu.Unlock()
+
+				for _, s := range severLogList {
+					go c.tailServeLog(s, stopChan)
 				}
-				for _, s := range c.serverChatLogList {
-					go c.tailServerChatLog(s)
+				for _, s := range serverChatLogList {
+					go c.tailServerChatLog(s, stopChan)
 				}
 			default:
-				time.Sleep(5 * time.Second)
+				time.Sleep(2 * time.Second)
 				continue
 			}
 		}
@@ -147,10 +200,11 @@ func (c *Collect) parseSpawnRequestLog(text string) {
 
 	// 同步更新该玩家最近一条玩家日志的角色
 	var lastLog model.PlayerLog
-	if err := database.Db.Where("name = ? AND cluster_name = ?", name, c.clusterName).Order("created_at desc").First(&lastLog).Error; err == nil && lastLog.ID != 0 {
-		if lastLog.Role == "" {
+	if err := database.Db.Where("name = ?", name).Order("id desc").First(&lastLog).Error; err == nil && lastLog.ID != 0 {
+		if lastLog.Role == "" || lastLog.Role == "-" {
 			lastLog.Role = role
 			database.Db.Save(&lastLog)
+			log.Printf("[Collector] 成功更新玩家 %s 的角色为: %s\n", name, role)
 		}
 	}
 }
@@ -211,10 +265,10 @@ func (c *Collect) handleServerLogLine(text string) {
 		}
 		c.mu.Unlock()
 
-		log.Printf("捕获玩家认证: KuId=%s, Name=%s, IP=%s\n", kuId, name, ip)
+		log.Printf("[Collector] 捕获玩家认证: KuId=%s, Name=%s, IP=%s\n", kuId, name, ip)
 
 		var connect model.Connect
-		err := database.Db.Where("ku_id = ? AND cluster_name = ?", kuId, c.clusterName).Last(&connect).Error
+		err := database.Db.Where("ku_id = ?", kuId).Last(&connect).Error
 		if err == nil && connect.ID != 0 {
 			connect.Name = name
 			if ip != "" {
@@ -222,6 +276,9 @@ func (c *Collect) handleServerLogLine(text string) {
 			}
 			if timeStr != "" {
 				connect.Time = timeStr
+			}
+			if c.clusterName != "" {
+				connect.ClusterName = c.clusterName
 			}
 			database.Db.Save(&connect)
 		} else {
@@ -248,7 +305,9 @@ func (c *Collect) handleServerLogLine(text string) {
 			ClusterName: c.clusterName,
 		}
 		if err := database.Db.Create(&playerLog).Error; err != nil {
-			log.Println("插入玩家认证日志失败:", err)
+			log.Println("[Collector] 插入玩家认证日志失败:", err)
+		} else {
+			log.Printf("[Collector] 成功记录玩家认证日志: ID=%d, 玩家=%s, KuId=%s, IP=%s\n", playerLog.ID, name, kuId, ip)
 		}
 		return
 	}
@@ -256,16 +315,16 @@ func (c *Collect) handleServerLogLine(text string) {
 	// 3. 匹配 SteamId: Authenticated client '76561198xxxxxxxxx'
 	if m := reSteamAuth.FindStringSubmatch(text); len(m) >= 2 {
 		steamId := m[1]
-		log.Println("捕获 SteamId:", steamId)
+		log.Println("[Collector] 捕获 SteamId:", steamId)
 		var connect model.Connect
-		err := database.Db.Where("cluster_name = ?", c.clusterName).Last(&connect).Error
+		err := database.Db.Order("id desc").Last(&connect).Error
 		if err == nil && connect.ID != 0 {
 			connect.SteamId = steamId
 			database.Db.Save(&connect)
 
 			// 同步更新最近一条缺失 SteamId 的玩家日志
 			var lastLog model.PlayerLog
-			if err := database.Db.Where("cluster_name = ? AND (steam_id = '' OR steam_id IS NULL)", c.clusterName).Order("created_at desc").First(&lastLog).Error; err == nil && lastLog.ID != 0 {
+			if err := database.Db.Where("steam_id = '' OR steam_id IS NULL").Order("id desc").First(&lastLog).Error; err == nil && lastLog.ID != 0 {
 				lastLog.SteamId = steamId
 				database.Db.Save(&lastLog)
 			}
@@ -286,36 +345,35 @@ func (c *Collect) handleServerLogLine(text string) {
 	}
 }
 
-func (c *Collect) tailServeLog(fileName string) {
-	log.Println("开始采集 path:", fileName)
+func (c *Collect) tailServeLog(fileName string, stopChan chan bool) {
+	log.Println("[Collector] 开始监听 server_log:", fileName)
 	config := tail.Config{
 		ReOpen:    true,                                 // 重新打开
 		Follow:    true,                                 // 是否跟随
-		Location:  &tail.SeekInfo{Offset: 0, Whence: 2}, // 从文件的哪个地方开始读
+		Location:  &tail.SeekInfo{Offset: 0, Whence: 2}, // 从末尾开始读
 		MustExist: false,                                // 文件不存在不报错
 		Poll:      true,
 	}
 	tails, err := tail.TailFile(fileName, config)
 	if err != nil {
-		log.Println("文件监听失败", err)
+		log.Println("[Collector] server_log 文件监听失败:", fileName, err)
 		return
 	}
+	defer tails.Cleanup()
+
 	for {
 		select {
 		case line, ok := <-tails.Lines:
 			if !ok {
-				log.Println("文件读取失败", fileName)
-				time.Sleep(time.Second)
-			} else {
-				c.handleServerLogLine(line.Text)
-			}
-		case <-c.stop:
-			// 结束监听
-			err := tails.Stop()
-			if err != nil {
-				log.Println("tail log 结束失败")
+				log.Println("[Collector] server_log 监听流已关闭:", fileName)
 				return
 			}
+			if line != nil && line.Text != "" {
+				c.handleServerLogLine(line.Text)
+			}
+		case <-stopChan:
+			log.Println("[Collector] 收到停止信号，退出 server_log 监听:", fileName)
+			_ = tails.Stop()
 			return
 		}
 	}
@@ -401,9 +459,11 @@ func (c *Collect) parseSay(text string) {
 		ClusterName: c.clusterName,
 	}
 
-	// 保存到数据库，并打印错误
+	// 保存到数据库，并打印日志
 	if err := database.Db.Create(&playerLog).Error; err != nil {
-		fmt.Println("插入玩家日志失败:", err)
+		log.Println("[Collector] 插入发言日志失败:", err)
+	} else {
+		log.Printf("[Collector] 成功记录发言日志: ID=%d, 玩家=%s, 内容=%s\n", playerLog.ID, name, actionDesc)
 	}
 }
 
@@ -412,13 +472,11 @@ func (c *Collect) parseResurrect(text string) {
 }
 
 func (c *Collect) parseDeath(text string) {
-	fmt.Println(text)
-
 	// 正则表达式 (1)时间, (2)动作, (3)剩余所有内容
 	re := regexp.MustCompile(`^\[([^\]]+)\]:\s*(\[[^\]]+\])\s*(.*)$`)
 	matches := re.FindStringSubmatch(text)
 	if len(matches) != 4 {
-		log.Println("无法解析 Announcement Log (正则不匹配):", text)
+		log.Println("[Collector] 无法解析 Announcement Log (正则不匹配):", text)
 		return
 	}
 
@@ -432,9 +490,6 @@ func (c *Collect) parseDeath(text string) {
 	var actionDesc string
 
 	// 死亡/复活的分隔符列表 (支持中英文)
-	// 关键：在 Death Announce 和 Resurrect Announce 之间寻找共同的分隔模式
-	// 中文：死于： / 复活自：
-	// 英文：died from / resurrected from / revived by
 	announcementWords := []string{
 		"死于：", "died from", "was killed by", "starved", "suicide", // 死亡
 		"复活自：", "resurrected from", "revived by", // 复活
@@ -442,29 +497,23 @@ func (c *Collect) parseDeath(text string) {
 
 	splitIndex := -1
 	for _, word := range announcementWords {
-		// 查找分隔符
 		idx := strings.Index(rest, word)
-		if idx > splitIndex { // 找到最靠前的已知分隔符
+		if idx > splitIndex {
 			splitIndex = idx
-			// 找到后立即退出循环，因为第一个匹配就是名字和描述的边界
 			break
 		}
 	}
 
 	if splitIndex != -1 {
-		// 找到了分隔符：分割 rest
 		name = strings.TrimSpace(rest[:splitIndex])
 		actionDesc = strings.TrimSpace(rest[splitIndex:])
 	} else {
-		// 未找到已知分隔符，假设整个 rest 都是名字，描述为空 (适用于名字很长，或系统消息)
 		name = rest
 		actionDesc = ""
-		fmt.Println("Announcement Log 未找到分隔符，将全部分配给 Name:", name)
 	}
 
 	spawn := c.getSpawnRole(name)
 	connect := c.getConnectInfo(name)
-	fmt.Println(connect)
 
 	playerLog := model.PlayerLog{
 		Name:        name,
@@ -479,7 +528,9 @@ func (c *Collect) parseDeath(text string) {
 	}
 
 	if err := database.Db.Create(&playerLog).Error; err != nil {
-		fmt.Println("插入玩家日志失败:", err)
+		log.Println("[Collector] 插入玩家行为日志失败:", err)
+	} else {
+		log.Printf("[Collector] 成功记录行为日志: ID=%d, 玩家=%s, 动作=%s, 描述=%s\n", playerLog.ID, name, action, actionDesc)
 	}
 }
 
@@ -488,24 +539,20 @@ func (c *Collect) parseLeave(text string) {
 }
 
 func (c *Collect) parseJoin(text string) {
-	fmt.Println(text)
-
 	// 正则表达式：捕获 (1)时间, (2)动作, (3)玩家名
 	re := regexp.MustCompile(`^\[([^\]]+)\]:\s*(\[[^\]]+\])\s*(.+)$`)
 	matches := re.FindStringSubmatch(text)
 
 	// 预期匹配 4 组：[完整匹配, 时间, 动作, 玩家名]
 	if len(matches) != 4 {
-		log.Println("无法解析 Join Log (正则不匹配):", text)
+		log.Println("[Collector] 无法解析 Join/Leave Log (正则不匹配):", text)
 		return
 	}
 
 	// 捕获结果
 	t := matches[1]      // 时间: 00:01:43
 	action := matches[2] // 动作: [Join Announcement]
-	// 擦屁股
 	action = strings.ReplaceAll(action, " ", "")
-	// 玩家名字是捕获组 3，使用 strings.TrimSpace 确保名字前后没有多余空格
 	name := strings.TrimSpace(matches[3])
 
 	spawn := c.getSpawnRole(name)
@@ -530,7 +577,7 @@ func (c *Collect) parseJoin(text string) {
 
 	// 如果 30 秒内刚因客户端认证生成了同一玩家的上线日志，更新其角色与描述，避免重复刷两条
 	var recentLog model.PlayerLog
-	if strings.Contains(action, "Join") && database.Db.Where("name = ? AND cluster_name = ?", name, c.clusterName).Order("created_at desc").First(&recentLog).Error == nil && recentLog.ID != 0 && time.Since(recentLog.CreatedAt) < 30*time.Second {
+	if strings.Contains(action, "Join") && database.Db.Where("name = ?", name).Order("id desc").First(&recentLog).Error == nil && recentLog.ID != 0 && time.Since(recentLog.CreatedAt) < 30*time.Second {
 		recentLog.ActionDesc = "玩家进入世界"
 		if spawn.Role != "" {
 			recentLog.Role = spawn.Role
@@ -538,44 +585,52 @@ func (c *Collect) parseJoin(text string) {
 		if connect.SteamId != "" {
 			recentLog.SteamId = connect.SteamId
 		}
+		if connect.KuId != "" && recentLog.KuId == "" {
+			recentLog.KuId = connect.KuId
+		}
+		if connect.Ip != "" && recentLog.Ip == "" {
+			recentLog.Ip = connect.Ip
+		}
 		database.Db.Save(&recentLog)
+		log.Printf("[Collector] 更新玩家上线日志: ID=%d, 玩家=%s, 角色=%s\n", recentLog.ID, name, recentLog.Role)
 	} else {
 		if err := database.Db.Create(&playerLog).Error; err != nil {
-			fmt.Println("插入玩家日志失败:", err)
+			log.Println("[Collector] 插入进退服日志失败:", err)
+		} else {
+			log.Printf("[Collector] 成功记录进退服日志: ID=%d, 玩家=%s, 动作=%s\n", playerLog.ID, name, action)
 		}
 	}
 }
 
-func (c *Collect) tailServerChatLog(fileName string) {
-	log.Println("开始采集 path:", fileName)
+func (c *Collect) tailServerChatLog(fileName string, stopChan chan bool) {
+	log.Println("[Collector] 开始监听 server_chat_log:", fileName)
 	config := tail.Config{
 		ReOpen:    true,                                 // 重新打开
 		Follow:    true,                                 // 是否跟随
-		Location:  &tail.SeekInfo{Offset: 0, Whence: 2}, // 从文件的哪个地方开始读
+		Location:  &tail.SeekInfo{Offset: 0, Whence: 2}, // 从末尾开始读
 		MustExist: false,                                // 文件不存在不报错
 		Poll:      true,
 	}
 	tails, err := tail.TailFile(fileName, config)
 	if err != nil {
-		log.Println("文件监听失败", err)
+		log.Println("[Collector] server_chat_log 文件监听失败:", fileName, err)
+		return
 	}
+	defer tails.Cleanup()
+
 	for {
 		select {
 		case line, ok := <-tails.Lines:
 			if !ok {
-				log.Println("文件读取失败", err)
-				time.Sleep(time.Second)
-			} else {
-				text := line.Text
-				c.parseChatLog(text)
-			}
-		case <-c.stop:
-			// 结束监听
-			err := tails.Stop()
-			if err != nil {
-				log.Println("tail log 结束失败")
+				log.Println("[Collector] server_chat_log 监听流已关闭:", fileName)
 				return
 			}
+			if line != nil && line.Text != "" {
+				c.parseChatLog(line.Text)
+			}
+		case <-stopChan:
+			log.Println("[Collector] 收到停止信号，退出 server_chat_log 监听:", fileName)
+			_ = tails.Stop()
 			return
 		}
 	}

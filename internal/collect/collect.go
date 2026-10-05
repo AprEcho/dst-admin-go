@@ -3,6 +3,7 @@ package collect
 import (
 	"dst-admin-go/internal/database"
 	"dst-admin-go/internal/model"
+	"dst-admin-go/internal/pkg/utils/fileUtils"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -46,12 +47,21 @@ type Collect struct {
 }
 
 func NewCollect(baseLogPath string, clusterName string) *Collect {
+	masterDir := "Master"
+	if !fileUtils.Exists(filepath.Join(baseLogPath, "Master")) && fileUtils.Exists(filepath.Join(baseLogPath, "master")) {
+		masterDir = "master"
+	}
+	cavesDir := "Caves"
+	if !fileUtils.Exists(filepath.Join(baseLogPath, "Caves")) && fileUtils.Exists(filepath.Join(baseLogPath, "caves")) {
+		cavesDir = "caves"
+	}
+
 	severLogList := []string{
-		filepath.Join(baseLogPath, "Master", "server_log.txt"),
-		filepath.Join(baseLogPath, "Caves", "server_log.txt"),
+		filepath.Join(baseLogPath, masterDir, "server_log.txt"),
+		filepath.Join(baseLogPath, cavesDir, "server_log.txt"),
 	}
 	serverChatLogList := []string{
-		filepath.Join(baseLogPath, "Master", "server_chat_log.txt"),
+		filepath.Join(baseLogPath, masterDir, "server_chat_log.txt"),
 	}
 	total := len(severLogList) + len(serverChatLogList)
 	collect := &Collect{
@@ -134,6 +144,15 @@ func (c *Collect) parseSpawnRequestLog(text string) {
 	if err := database.Db.Create(&spawn).Error; err != nil {
 		log.Printf("插入玩家 Spawn 日志失败: %v\n", err)
 	}
+
+	// 同步更新该玩家最近一条玩家日志的角色
+	var lastLog model.PlayerLog
+	if err := database.Db.Where("name = ? AND cluster_name = ?", name, c.clusterName).Order("created_at desc").First(&lastLog).Error; err == nil && lastLog.ID != 0 {
+		if lastLog.Role == "" {
+			lastLog.Role = role
+			database.Db.Save(&lastLog)
+		}
+	}
 }
 
 func (c *Collect) parseRegenerateLog(text string) {
@@ -215,6 +234,22 @@ func (c *Collect) handleServerLogLine(text string) {
 			}
 			database.Db.Create(&connect)
 		}
+
+		// 同时记录到玩家日志表中，确保面板的“玩家日志”能立即展示玩家上线
+		playerLog := model.PlayerLog{
+			Name:        name,
+			Role:        c.getSpawnRole(name).Role,
+			Action:      "[JoinAnnouncement]",
+			ActionDesc:  "玩家连接认证成功",
+			Time:        timeStr,
+			Ip:          ip,
+			KuId:        kuId,
+			SteamId:     connect.SteamId,
+			ClusterName: c.clusterName,
+		}
+		if err := database.Db.Create(&playerLog).Error; err != nil {
+			log.Println("插入玩家认证日志失败:", err)
+		}
 		return
 	}
 
@@ -227,6 +262,13 @@ func (c *Collect) handleServerLogLine(text string) {
 		if err == nil && connect.ID != 0 {
 			connect.SteamId = steamId
 			database.Db.Save(&connect)
+
+			// 同步更新最近一条缺失 SteamId 的玩家日志
+			var lastLog model.PlayerLog
+			if err := database.Db.Where("cluster_name = ? AND (steam_id = '' OR steam_id IS NULL)", c.clusterName).Order("created_at desc").First(&lastLog).Error; err == nil && lastLog.ID != 0 {
+				lastLog.SteamId = steamId
+				database.Db.Save(&lastLog)
+			}
 		}
 		return
 	}
@@ -469,10 +511,16 @@ func (c *Collect) parseJoin(text string) {
 	spawn := c.getSpawnRole(name)
 	connect := c.getConnectInfo(name)
 
+	actionDesc := "玩家加入世界"
+	if strings.Contains(action, "Leave") {
+		actionDesc = "玩家离开世界"
+	}
+
 	playerLog := model.PlayerLog{
 		Name:        name,
 		Role:        spawn.Role,
 		Action:      action,
+		ActionDesc:  actionDesc,
 		Time:        t,
 		Ip:          connect.Ip,
 		KuId:        connect.KuId,
@@ -480,9 +528,21 @@ func (c *Collect) parseJoin(text string) {
 		ClusterName: c.clusterName,
 	}
 
-	// 保存到数据库，并打印错误
-	if err := database.Db.Create(&playerLog).Error; err != nil {
-		fmt.Println("插入玩家日志失败:", err)
+	// 如果 30 秒内刚因客户端认证生成了同一玩家的上线日志，更新其角色与描述，避免重复刷两条
+	var recentLog model.PlayerLog
+	if strings.Contains(action, "Join") && database.Db.Where("name = ? AND cluster_name = ?", name, c.clusterName).Order("created_at desc").First(&recentLog).Error == nil && recentLog.ID != 0 && time.Since(recentLog.CreatedAt) < 30*time.Second {
+		recentLog.ActionDesc = "玩家进入世界"
+		if spawn.Role != "" {
+			recentLog.Role = spawn.Role
+		}
+		if connect.SteamId != "" {
+			recentLog.SteamId = connect.SteamId
+		}
+		database.Db.Save(&recentLog)
+	} else {
+		if err := database.Db.Create(&playerLog).Error; err != nil {
+			fmt.Println("插入玩家日志失败:", err)
+		}
 	}
 }
 

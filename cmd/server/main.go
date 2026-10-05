@@ -23,9 +23,14 @@ import (
 	"dst-admin-go/internal/config"
 	"dst-admin-go/internal/database"
 	"fmt"
+	"log"
+
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
+	gin.ForceConsoleColor()
+	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
 	cfg := config.Load()
 	db := database.InitDB(cfg)

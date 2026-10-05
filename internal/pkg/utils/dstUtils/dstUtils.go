@@ -5,6 +5,7 @@ import (
 	"dst-admin-go/internal/pkg/utils/fileUtils"
 	"dst-admin-go/internal/service/dstConfig"
 	"io/ioutil"
+	"log"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -82,20 +83,23 @@ func ParseTemplate(templatePath string, data interface{}) string {
 	// 读取文件内容
 	content, err := ioutil.ReadFile(templatePath)
 	if err != nil {
-		panic(err)
+		log.Println("read template failed:", templatePath, err)
+		return ""
 	}
 
 	// 创建模板对象
 	tmpl, err := textTemplate.New("myTemplate").Parse(string(content))
 	if err != nil {
-		panic(err)
+		log.Println("parse template failed:", err)
+		return ""
 	}
 
 	// 执行模板并保存结果到字符串
 	buf := new(bytes.Buffer)
 	err = tmpl.Execute(buf, data)
 	if err != nil {
-		panic(err)
+		log.Println("execute template failed:", err)
+		return ""
 	}
 	return buf.String()
 

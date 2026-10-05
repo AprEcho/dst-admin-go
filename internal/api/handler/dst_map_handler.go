@@ -62,12 +62,22 @@ func (d *DstMapHandler) GenDstMap(ctx *gin.Context) {
 	sessionPath := filepath.Join(clusterPath, levelName, "save", "session")
 	filePath, err := findLatestMetaFile(sessionPath)
 	if err != nil {
-		log.Panicln(err)
+		log.Println("findLatestMetaFile error:", err)
+		ctx.JSON(http.StatusBadRequest, response.Response{
+			Code: 400,
+			Msg:  "未找到地图元数据文件: " + err.Error(),
+		})
+		return
 	}
 	log.Println("生成地图", filePath, outputImage)
 	height, width, err := dstMap.ExtractDimensions(filePath)
 	if err != nil {
-		log.Panicln(err)
+		log.Println("ExtractDimensions error:", err)
+		ctx.JSON(http.StatusBadRequest, response.Response{
+			Code: 400,
+			Msg:  "解析地图尺寸失败: " + err.Error(),
+		})
+		return
 	}
 	err = d.generator.GenerateMap(
 		filePath,
@@ -76,7 +86,12 @@ func (d *DstMapHandler) GenDstMap(ctx *gin.Context) {
 		width,
 	)
 	if err != nil {
-		log.Panicln(err)
+		log.Println("GenerateMap error:", err)
+		ctx.JSON(http.StatusInternalServerError, response.Response{
+			Code: 500,
+			Msg:  "生成地图失败: " + err.Error(),
+		})
+		return
 	}
 	ctx.JSON(http.StatusOK, response.Response{
 		Code: 200,
@@ -140,11 +155,21 @@ func (d *DstMapHandler) HasWalrusHutPlains(ctx *gin.Context) {
 	sessionPath := filepath.Join(clusterPath, levelName, "save", "session")
 	filePath, err := findLatestMetaFile(sessionPath)
 	if err != nil {
-		log.Panicln(err)
+		log.Println("findLatestMetaFile error:", err)
+		ctx.JSON(http.StatusBadRequest, response.Response{
+			Code: 400,
+			Msg:  "未找到地图存档文件: " + err.Error(),
+		})
+		return
 	}
 	file, err := fileUtils.ReadFile(filePath)
 	if err != nil {
-		log.Panicln(err)
+		log.Println("ReadFile error:", err)
+		ctx.JSON(http.StatusBadRequest, response.Response{
+			Code: 400,
+			Msg:  "读取地图存档文件失败: " + err.Error(),
+		})
+		return
 	}
 	hasWalrusHutPlains := strings.Contains(file, "WalrusHut_Plains")
 	ctx.JSON(http.StatusOK, response.Response{
@@ -179,11 +204,21 @@ func (d *DstMapHandler) GetSessionFile(ctx *gin.Context) {
 	sessionPath := filepath.Join(clusterPath, levelName, "save", "session")
 	filePath, err := findLatestMetaFile(sessionPath)
 	if err != nil {
-		log.Panicln(err)
+		log.Println("findLatestMetaFile error:", err)
+		ctx.JSON(http.StatusBadRequest, response.Response{
+			Code: 400,
+			Msg:  "未找到地图存档文件: " + err.Error(),
+		})
+		return
 	}
 	file, err := fileUtils.ReadFile(filePath)
 	if err != nil {
-		log.Panicln(err)
+		log.Println("ReadFile error:", err)
+		ctx.JSON(http.StatusBadRequest, response.Response{
+			Code: 400,
+			Msg:  "读取地图存档文件失败: " + err.Error(),
+		})
+		return
 	}
 	ctx.JSON(http.StatusOK, response.Response{
 		Code: 200,
@@ -230,12 +265,22 @@ func (d *DstMapHandler) GetPlayerSessionFile(ctx *gin.Context) {
 	log.Println(sessionPath)
 	filePath, err := findLatestPlayerFile(sessionPath)
 	if err != nil {
-		log.Panicln(err)
+		log.Println("findLatestPlayerFile error:", err)
+		ctx.JSON(http.StatusBadRequest, response.Response{
+			Code: 400,
+			Msg:  "未找到玩家存档文件: " + err.Error(),
+		})
+		return
 	}
 	log.Println(filePath)
 	file, err := fileUtils.ReadFile(filePath)
 	if err != nil {
-		log.Panicln(err)
+		log.Println("ReadFile error:", err)
+		ctx.JSON(http.StatusBadRequest, response.Response{
+			Code: 400,
+			Msg:  "读取玩家存档文件失败: " + err.Error(),
+		})
+		return
 	}
 	ctx.JSON(http.StatusOK, response.Response{
 		Code: 200,
@@ -293,16 +338,16 @@ const sessionPrefix = "/save/session/"
 
 // extractSessionID 提取 /save/session/ 后的第一个路径段（如 925F2AFB73839B9E）
 func extractSessionID(p string) string {
-	// 找到 "/save/session/" 的起始位置
-	i := strings.Index(p, sessionPrefix)
-	// 由于题目保证一定存在，可直接跳过错误检查
-	rest := p[i+len(sessionPrefix):]
-	// 取第一个 '/' 之前的部分（即 session ID）
+	normalized := filepath.ToSlash(p)
+	i := strings.Index(normalized, sessionPrefix)
+	if i == -1 {
+		return ""
+	}
+	rest := normalized[i+len(sessionPrefix):]
 	if j := strings.Index(rest, "/"); j != -1 {
 		return rest[:j]
 	}
-	// 理论上不会走到这里（因为后面还有子目录如 /0000000002），但为安全起见：
-	return rest // 整个剩余部分（如路径恰好以 ID 结尾）
+	return rest
 }
 
 func findLatestMetaFile(directory string) (string, error) {

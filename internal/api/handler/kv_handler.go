@@ -3,7 +3,6 @@ package handler
 import (
 	"dst-admin-go/internal/model"
 	"dst-admin-go/internal/pkg/response"
-	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -60,7 +59,8 @@ func (i *KvHandler) SaveKv(ctx *gin.Context) {
 	kv := model.KV{}
 	err := ctx.ShouldBind(&kv)
 	if err != nil {
-		log.Panicln(err)
+		response.FailWithMessage("参数错误: "+err.Error(), ctx)
+		return
 	}
 	db := i.db
 	oldKv := model.KV{}

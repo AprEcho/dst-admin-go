@@ -56,7 +56,8 @@ func (p *WindowProcess) StartAll(clusterName string) error {
 	}
 	config, err := p.levelConfigUtils.GetLevelConfig(clusterName)
 	if err != nil {
-		log.Panicln(err)
+		log.Println("获取关卡配置失败:", err)
+		return err
 	}
 	var wg sync.WaitGroup
 	wg.Add(len(config.LevelList))
@@ -84,7 +85,8 @@ func (p *WindowProcess) StopAll(clusterName string) error {
 
 	config, err := p.levelConfigUtils.GetLevelConfig(clusterName)
 	if err != nil {
-		log.Panicln(err)
+		log.Println("获取关卡配置失败:", err)
+		return err
 	}
 	var wg sync.WaitGroup
 	wg.Add(len(config.LevelList))

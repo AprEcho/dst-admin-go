@@ -11,8 +11,10 @@ import (
 	"dst-admin-go/internal/service/archive"
 	"dst-admin-go/internal/service/dstConfig"
 	"dst-admin-go/internal/service/game"
+	"errors"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,7 +66,8 @@ func (b *BackupService) GetBackupList(clusterName string) []BackupInfo {
 	//获取文件或目录相关信息
 	fileInfoList, err := ioutil.ReadDir(backupPath)
 	if err != nil {
-		log.Panicln(err)
+		log.Println("failed to read backup dir:", err)
+		return backupList
 	}
 
 	for _, file := range fileInfoList {
@@ -87,68 +90,86 @@ func (b *BackupService) GetBackupList(clusterName string) []BackupInfo {
 
 }
 
-func (b *BackupService) RenameBackup(ctx *gin.Context, fileName, newName string) {
+func (b *BackupService) RenameBackup(ctx *gin.Context, fileName, newName string) error {
 	clusterName := context.GetClusterName(ctx)
 	config, err := b.dstConfig.GetDstConfig(clusterName)
 	if err != nil {
 		log.Println("failed to get dst config:", err)
-		return
+		return err
 	}
 	backupPath := config.Backup
-	err = fileUtils.Rename(filepath.Join(backupPath, fileName), filepath.Join(backupPath, newName))
-	if err != nil {
-		return
+	cleanOld := filepath.Base(fileName)
+	cleanNew := filepath.Base(newName)
+	if cleanOld == "." || cleanOld == "/" || cleanOld == ".." || cleanNew == "." || cleanNew == "/" || cleanNew == ".." {
+		return errors.New("invalid fileName or newName")
 	}
+	err = fileUtils.Rename(filepath.Join(backupPath, cleanOld), filepath.Join(backupPath, cleanNew))
+	if err != nil {
+		log.Println("rename backup error:", err)
+		return err
+	}
+	return nil
 }
 
-func (b *BackupService) DeleteBackup(ctx *gin.Context, fileNames []string) {
-
+func (b *BackupService) DeleteBackup(ctx *gin.Context, fileNames []string) error {
 	clusterName := context.GetClusterName(ctx)
 	config, err := b.dstConfig.GetDstConfig(clusterName)
 	if err != nil {
 		log.Println("failed to get dst config:", err)
-		return
+		return err
 	}
 	backupPath := config.Backup
 	for _, fileName := range fileNames {
-		filePath := filepath.Join(backupPath, fileName)
+		cleanName := filepath.Base(fileName)
+		if cleanName == "." || cleanName == "/" || cleanName == ".." {
+			continue
+		}
+		filePath := filepath.Join(backupPath, cleanName)
 		if !fileUtils.Exists(filePath) {
 			continue
 		}
 		err := fileUtils.DeleteFile(filePath)
 		if err != nil {
-			return
+			log.Println("delete backup file error:", filePath, err)
+			return err
 		}
 	}
-
+	return nil
 }
 
-func (b *BackupService) RestoreBackup(ctx *gin.Context, backupName string) {
-
+func (b *BackupService) RestoreBackup(ctx *gin.Context, backupName string) error {
 	clusterName := context.GetClusterName(ctx)
 	config, err := b.dstConfig.GetDstConfig(clusterName)
 	if err != nil {
 		log.Println("failed to get dst config:", err)
-		return
+		return err
 	}
 
-	filePath := filepath.Join(config.Backup, backupName)
+	cleanBackupName := filepath.Base(backupName)
+	if cleanBackupName == "." || cleanBackupName == "/" || cleanBackupName == ".." {
+		return errors.New("invalid backupName")
+	}
+	filePath := filepath.Join(config.Backup, cleanBackupName)
+	if !fileUtils.Exists(filePath) {
+		return errors.New("backup file does not exist")
+	}
 	clusterPath := filepath.Join(b.archive.ClusterPath(clusterName))
 	err = fileUtils.DeleteDir(clusterPath)
 	if err != nil {
-		log.Panicln("删除失败,", clusterPath, err)
+		log.Println("删除旧存档目录失败:", clusterPath, err)
+		return err
 	}
 	log.Println("正在恢复存档", filePath, filepath.Join(b.archive.KleiBasePath(clusterName)))
 
-	// err = zip.Unzip2(filePath, filepath.Join(constant.HOME_PATH, ".klei/DoNotStarveTogether"), cluster.ClusterName)
 	err = zip.Unzip3(filePath, clusterPath)
 	if err != nil {
-		log.Panicln("解压失败,", filePath, clusterPath, err)
+		log.Println("解压备份失败:", filePath, clusterPath, err)
+		return err
 	}
 	// 安装mod
 	modoverride, err := fileUtils.ReadFile(b.archive.ModoverridesPath(clusterName, "Master"))
 	if err != nil {
-		log.Println("读取模组失败", err)
+		log.Println("读取模组失败:", err)
 	}
 	config, err = b.dstConfig.GetDstConfig(clusterName)
 	if err != nil {
@@ -158,14 +179,14 @@ func (b *BackupService) RestoreBackup(ctx *gin.Context, backupName string) {
 	if err != nil {
 		log.Println(err.Error())
 	}
+	return nil
 }
 
-func (b *BackupService) CreateBackup(clusterName, backupName string) {
-
+func (b *BackupService) CreateBackup(clusterName, backupName string) error {
 	config, err := b.dstConfig.GetDstConfig(clusterName)
 	if err != nil {
 		log.Println("failed to get dst config:", err)
-		return
+		return err
 	}
 	backupPath := config.Backup
 
@@ -180,69 +201,93 @@ func (b *BackupService) CreateBackup(clusterName, backupName string) {
 
 	src := b.archive.ClusterPath(clusterName)
 	if !fileUtils.Exists(backupPath) {
-		log.Panicln("backup path is not exists")
+		if err := os.MkdirAll(backupPath, 0755); err != nil {
+			log.Println("failed to create backup dir:", err)
+			return err
+		}
 	}
 	if backupName == "" {
 		backupName = b.GenGameBackUpName(clusterName)
+	} else {
+		backupName = filepath.Base(backupName)
 	}
 	dst := filepath.Join(backupPath, backupName)
 	log.Println("src", src, dst)
 	err = zip.Zip(src, dst)
 	if err != nil {
-		log.Panicln("create backup error", err)
+		log.Println("create backup error:", err)
+		return err
 	}
 	log.Println("创建备份成功")
+	return nil
 }
 
 func (b *BackupService) DownloadBackup(c *gin.Context) {
-	fileName := c.Query("fileName")
+	rawFileName := c.Query("fileName")
+	fileName := filepath.Base(rawFileName)
+	if fileName == "." || fileName == "/" || fileName == ".." || fileName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "invalid fileName"})
+		return
+	}
 
 	clusterName := c.GetHeader("level")
 	config, err := b.dstConfig.GetDstConfig(clusterName)
 	if err != nil {
 		log.Println("failed to get dst config:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "failed to get dst config"})
 		return
 	}
 
 	filePath := filepath.Join(config.Backup, fileName)
-	//打开文件
-	_, err = os.Open(filePath)
-	//非空处理
-	if err != nil {
-		log.Panicln("download filePath error", err)
+	if !fileUtils.Exists(filePath) {
+		c.JSON(http.StatusNotFound, gin.H{"code": 404, "msg": "备份文件不存在"})
+		return
 	}
+
+	// 修复：移除原有的 os.Open(filePath) 导致的文件描述符泄漏
 	c.Header("Content-Type", "application/octet-stream")
 	c.Header("Content-Disposition", "attachment; filename="+fileName)
 	c.Header("Content-Transfer-Encoding", "binary")
-	// c.Header("Content-Length", strconv.FormatInt(f.Size(), 10))
 	c.File(filePath)
 }
 
-func (b *BackupService) UploadBackup(c *gin.Context) {
+func (b *BackupService) UploadBackup(c *gin.Context) error {
 	// 单文件
-	file, _ := c.FormFile("file")
-	log.Println(file.Filename)
+	file, err := c.FormFile("file")
+	if err != nil {
+		return err
+	}
+	fileName := filepath.Base(file.Filename)
+	if fileName == "." || fileName == "/" || fileName == ".." || fileName == "" {
+		return errors.New("invalid filename")
+	}
+	log.Println("uploading backup:", fileName)
 
 	clusterName := context.GetClusterName(c)
 	config, err := b.dstConfig.GetDstConfig(clusterName)
 	if err != nil {
 		log.Println("failed to get dst config:", err)
-		return
+		return err
 	}
-	dst := filepath.Join(config.Backup, file.Filename)
 
+	if !fileUtils.Exists(config.Backup) {
+		if err := os.MkdirAll(config.Backup, 0755); err != nil {
+			return err
+		}
+	}
+
+	dst := filepath.Join(config.Backup, fileName)
 	if fileUtils.Exists(dst) {
-		log.Panicln("backup is existed")
+		return errors.New("backup already exists")
 	}
 
 	// 上传文件至指定的完整文件路径
 	err = c.SaveUploadedFile(file, dst)
 	if err != nil {
-		return
+		log.Println("save uploaded file error:", err)
+		return err
 	}
-
-	// c.String(http.StatusOK, fmt.Sprintf("'%s' uploaded!", file.Filename))
-
+	return nil
 }
 
 func (b *BackupService) ScheduleBackupSnapshots() {

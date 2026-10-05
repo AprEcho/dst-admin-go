@@ -179,7 +179,8 @@ func (p *GameConfig) GetClusterIni(clusterName string) (ClusterIni, error) {
 
 	clusterIni, err := fileUtils.ReadLnFile(clusterIniPath)
 	if err != nil {
-		panic("read cluster.ini file error: " + err.Error())
+		log.Println("read cluster.ini file error:", err)
+		return newClusterIni, nil
 	}
 	for _, value := range clusterIni {
 		if value == "" {

@@ -237,7 +237,8 @@ func (l *LevelService) DeleteLevel(clusterName string, levelName string) error {
 	// 删除 json 文件中的记录
 	config, err := l.levelConfigUtils.GetLevelConfig(clusterName)
 	if err != nil {
-		log.Panicln("删除文件失败")
+		log.Println("获取关卡配置失败:", err)
+		return err
 	}
 	newLevelsConfig := levelConfig.LevelConfig{}
 	for i := range config.LevelList {

@@ -44,17 +44,39 @@ func NewLoginService(config *config.Config) *LoginService {
 	}
 }
 
+func parsePasswordLines(lines []string) (username, password, displayName, photoURL string) {
+	for _, line := range lines {
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		switch strings.ToLower(key) {
+		case "username":
+			username = val
+		case "password":
+			password = val
+		case "displayname":
+			displayName = val
+		case "photourl":
+			photoURL = val
+		}
+	}
+	return
+}
+
 func (l *LoginService) GetUserInfo() UserInfo {
 	user, err := fileUtils.ReadLnFile(l.passwordPath())
-
 	if err != nil {
-		log.Panicln("Not find password file error: " + err.Error())
+		log.Println("Read password file error:", err)
+		return UserInfo{Username: "admin"}
 	}
 
-	username := strings.TrimSpace(strings.Split(user[0], "=")[1])
-	// password := strings.TrimSpace(strings.Split(user[1], "=")[1])
-	displayName := strings.TrimSpace(strings.Split(user[2], "=")[1])
-	photoURL := strings.TrimSpace(strings.Split(user[3], "=")[1])
+	username, _, displayName, photoURL := parsePasswordLines(user)
+	if username == "" {
+		username = "admin"
+	}
 
 	return UserInfo{
 		Username:    username,
@@ -65,42 +87,44 @@ func (l *LoginService) GetUserInfo() UserInfo {
 
 func (l *LoginService) Login(userInfo UserInfo, ctx *gin.Context) *response.Response {
 
-	response := &response.Response{}
+	resp := &response.Response{}
 
 	user, err := fileUtils.ReadLnFile(l.passwordPath())
 	if err != nil {
-		log.Panicln("Not find password file error: " + err.Error())
+		log.Println("Read password file error:", err)
+		resp.Code = 500
+		resp.Msg = "读取认证配置失败"
+		return resp
 	}
 
-	username := strings.TrimSpace(strings.Split(user[0], "=")[1])
-	password := strings.TrimSpace(strings.Split(user[1], "=")[1])
-	displayName := strings.TrimSpace(strings.Split(user[2], "=")[1])
-	photoURL := strings.TrimSpace(strings.Split(user[3], "=")[1])
+	username, password, displayName, photoURL := parsePasswordLines(user)
 	white := l.IsWhiteIP(ctx)
 	if !white {
 		if username != userInfo.Username || password != userInfo.Password {
-			log.Panicln("User authentication failed")
-			response.Code = 401
-			response.Msg = "User authentication failed"
-			return response
+			resp.Code = 401
+			resp.Msg = "User authentication failed"
+			return resp
 		}
 	}
 	session := sessions.Default(ctx)
 	session.Set("username", username)
 	err = session.Save()
 	if err != nil {
-		log.Panicln(err)
+		log.Println("save session error:", err)
+		resp.Code = 500
+		resp.Msg = "保存会话失败"
+		return resp
 	}
 
-	response.Code = 200
-	response.Msg = "Login success"
-	response.Data = map[string]interface{}{
+	resp.Code = 200
+	resp.Msg = "Login success"
+	resp.Data = map[string]interface{}{
 		"username":    username,
 		"displayName": displayName,
 		"photoURL":    photoURL,
 	}
 
-	return response
+	return resp
 }
 
 func (l *LoginService) Logout(ctx *gin.Context) {
@@ -108,29 +132,34 @@ func (l *LoginService) Logout(ctx *gin.Context) {
 	session.Clear()
 	err := session.Save()
 	if err != nil {
-		log.Panicln(err)
+		log.Println("logout session save error:", err)
 	}
 }
 
 func (l *LoginService) DirectLogin(ctx *gin.Context) {
 	user, err := fileUtils.ReadLnFile(l.passwordPath())
 	if err != nil {
-		log.Panicln("Not find password file error: " + err.Error())
+		log.Println("Read password file error:", err)
+		return
 	}
-	username := strings.TrimSpace(strings.Split(user[0], "=")[1])
+	username, _, _, _ := parsePasswordLines(user)
+	if username == "" {
+		username = "admin"
+	}
 	session := sessions.Default(ctx)
 	session.Set("username", username)
+	_ = session.Save()
 }
 
 func (l *LoginService) ChangeUser(username, password string) {
 	user, err := fileUtils.ReadLnFile(l.passwordPath())
-	if err != nil {
-		log.Panicln("Not find password file error: " + err.Error())
+	displayName := ""
+	photoURL := ""
+	if err == nil {
+		_, _, displayName, photoURL = parsePasswordLines(user)
 	}
-	displayName := strings.TrimSpace(strings.Split(user[2], "=")[1])
-	photoURL := strings.TrimSpace(strings.Split(user[3], "=")[1])
 	fileUtils.CreateDirIfNotExists(l.config.DataDir)
-	fileUtils.WriterLnFile(l.passwordPath(), []string{
+	_ = fileUtils.WriterLnFile(l.passwordPath(), []string{
 		"username = " + username,
 		"password = " + password,
 		"displayName=" + displayName,
@@ -140,27 +169,36 @@ func (l *LoginService) ChangeUser(username, password string) {
 
 func (l *LoginService) ChangePassword(newPassword string) *response.Response {
 
-	response := &response.Response{}
+	resp := &response.Response{}
 	user, err := fileUtils.ReadLnFile(l.passwordPath())
-
 	if err != nil {
-		log.Panicln("Not find password file error: " + err.Error())
+		log.Println("Read password file error:", err)
+		resp.Code = 500
+		resp.Msg = "读取认证配置失败"
+		return resp
 	}
-	username := strings.TrimSpace(strings.Split(user[0], "=")[1])
-	displayName := strings.TrimSpace(strings.Split(user[2], "=")[1])
-	photoURL := strings.TrimSpace(strings.Split(user[3], "=")[1])
+	username, _, displayName, photoURL := parsePasswordLines(user)
+	if username == "" {
+		username = "admin"
+	}
 	fileUtils.CreateDirIfNotExists(l.config.DataDir)
-	fileUtils.WriterLnFile(l.passwordPath(), []string{
+	err = fileUtils.WriterLnFile(l.passwordPath(), []string{
 		"username = " + username,
 		"password = " + newPassword,
 		"displayName=" + displayName,
 		"photoURL=" + photoURL,
 	})
+	if err != nil {
+		log.Println("write password file error:", err)
+		resp.Code = 500
+		resp.Msg = "写入密码文件失败"
+		return resp
+	}
 
-	response.Code = 200
-	response.Msg = "Update user new password success"
+	resp.Code = 200
+	resp.Msg = "Update user new password success"
 
-	return response
+	return resp
 }
 
 func (l *LoginService) InitUserInfo(userInfo UserInfo) {
@@ -169,7 +207,7 @@ func (l *LoginService) InitUserInfo(userInfo UserInfo) {
 	displayName := "displayName=" + userInfo.DisplayName
 	photoURL := "photoURL=" + userInfo.PhotoURL
 	fileUtils.CreateDirIfNotExists(l.config.DataDir)
-	fileUtils.WriterLnFile(l.passwordPath(), []string{username, password, displayName, photoURL})
+	_ = fileUtils.WriterLnFile(l.passwordPath(), []string{username, password, displayName, photoURL})
 }
 
 func (l *LoginService) IsWhiteIP(ctx *gin.Context) bool {

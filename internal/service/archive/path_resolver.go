@@ -38,7 +38,8 @@ func NewPathResolver(dstConfig dstConfig.Config) (*PathResolver, error) {
 func (r *PathResolver) KleiBasePath(clusterName string) string {
 	config, err := r.dstConfig.GetDstConfig(clusterName)
 	if err != nil {
-		log.Panic(err)
+		log.Println("get dst config failed:", err)
+		return ""
 	}
 	persistentStorageRoot := config.Persistent_storage_root
 	confDir := config.Conf_dir

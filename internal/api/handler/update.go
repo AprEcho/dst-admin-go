@@ -36,7 +36,9 @@ func (h *UpdateHandler) Update(ctx *gin.Context) {
 
 	err := h.updateService.Update(clusterName)
 	if err != nil {
-		log.Panicln("更新游戏失败: ", err)
+		log.Println("更新游戏失败: ", err)
+		response.FailWithMessage("更新游戏失败: "+err.Error(), ctx)
+		return
 	}
 
 	ctx.JSON(http.StatusOK, response.Response{

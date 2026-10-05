@@ -5,6 +5,7 @@ import (
 	"dst-admin-go/internal/model"
 	"dst-admin-go/internal/pkg/utils/fileUtils"
 	"log"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -26,6 +27,19 @@ func InitDB(config *config.Config) *gorm.DB {
 		log.Println(err)
 		panic("failed to connect database")
 	}
+
+	// 优化 SQLite 并发读写性能，避免 "database is locked"
+	db.Exec("PRAGMA journal_mode = WAL;")
+	db.Exec("PRAGMA busy_timeout = 5000;")
+	db.Exec("PRAGMA synchronous = NORMAL;")
+
+	sqlDB, err := db.DB()
+	if err == nil {
+		sqlDB.SetMaxOpenConns(1)
+		sqlDB.SetMaxIdleConns(1)
+		sqlDB.SetConnMaxLifetime(time.Hour)
+	}
+
 	Db = db
 	err = db.AutoMigrate(
 		&model.Spawn{},

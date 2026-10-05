@@ -6,7 +6,6 @@ import (
 	"dst-admin-go/internal/pkg/context"
 	"dst-admin-go/internal/pkg/response"
 	"dst-admin-go/internal/service/backup"
-	"log"
 	"net/http"
 	"strings"
 
@@ -51,9 +50,13 @@ func (h *BackupHandler) DeleteBackup(ctx *gin.Context) {
 		FileNames []string `json:"fileNames"`
 	}
 	if err := ctx.BindJSON(&body); err != nil {
+		response.FailWithMessage("参数错误: "+err.Error(), ctx)
 		return
 	}
-	h.backupService.DeleteBackup(ctx, body.FileNames)
+	if err := h.backupService.DeleteBackup(ctx, body.FileNames); err != nil {
+		response.FailWithMessage("删除备份失败: "+err.Error(), ctx)
+		return
+	}
 	ctx.JSON(http.StatusOK, response.Response{
 		Code: 200,
 		Msg:  "delete backups success",
@@ -107,9 +110,13 @@ func (h *BackupHandler) RenameBackup(ctx *gin.Context) {
 		NewName  string `json:"newName"`
 	}
 	if err := ctx.BindJSON(&body); err != nil {
+		response.FailWithMessage("参数错误: "+err.Error(), ctx)
 		return
 	}
-	h.backupService.RenameBackup(ctx, body.FileName, body.NewName)
+	if err := h.backupService.RenameBackup(ctx, body.FileName, body.NewName); err != nil {
+		response.FailWithMessage("重命名失败: "+err.Error(), ctx)
+		return
+	}
 
 	ctx.JSON(http.StatusOK, response.Response{
 		Code: 200,
@@ -129,8 +136,15 @@ func (h *BackupHandler) RenameBackup(ctx *gin.Context) {
 // @Router /backup/restore [get]
 func (h *BackupHandler) RestoreBackup(ctx *gin.Context) {
 	backupName := ctx.Query("backupName")
+	if backupName == "" {
+		response.FailWithMessage("backupName 不能为空", ctx)
+		return
+	}
 
-	h.backupService.RestoreBackup(ctx, backupName)
+	if err := h.backupService.RestoreBackup(ctx, backupName); err != nil {
+		response.FailWithMessage("恢复备份失败: "+err.Error(), ctx)
+		return
+	}
 
 	ctx.JSON(http.StatusOK, response.Response{
 		Code: 200,
@@ -149,7 +163,10 @@ func (h *BackupHandler) RestoreBackup(ctx *gin.Context) {
 // @Router /api/game/backup/upload [post]
 func (h *BackupHandler) UploadBackup(ctx *gin.Context) {
 
-	h.backupService.UploadBackup(ctx)
+	if err := h.backupService.UploadBackup(ctx); err != nil {
+		response.FailWithMessage("上传备份失败: "+err.Error(), ctx)
+		return
+	}
 
 	ctx.JSON(http.StatusOK, response.Response{
 		Code: 200,
@@ -175,7 +192,10 @@ func (h *BackupHandler) CreateBackup(ctx *gin.Context) {
 		body.BackupName = ""
 	}
 	clusterName := context.GetClusterName(ctx)
-	h.backupService.CreateBackup(clusterName, body.BackupName)
+	if err := h.backupService.CreateBackup(clusterName, body.BackupName); err != nil {
+		response.FailWithMessage("创建备份失败: "+err.Error(), ctx)
+		return
+	}
 
 	ctx.JSON(http.StatusOK, response.Response{
 		Code: 200,
@@ -199,7 +219,8 @@ func (h *BackupHandler) SaveBackupSnapshotsSetting(ctx *gin.Context) {
 	var oldBackupSnapshot model.BackupSnapshot
 	err := ctx.ShouldBind(&backupSnapshot)
 	if err != nil {
-		log.Panicln("参数错误", err)
+		response.FailWithMessage("参数错误: "+err.Error(), ctx)
+		return
 	}
 	db := database.Db
 	db.First(&oldBackupSnapshot)

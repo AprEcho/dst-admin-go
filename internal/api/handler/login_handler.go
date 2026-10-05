@@ -7,7 +7,6 @@ import (
 	"dst-admin-go/internal/pkg/response"
 	"dst-admin-go/internal/pkg/utils/fileUtils"
 	"dst-admin-go/internal/service/login"
-	"log"
 	"net/http"
 	"path/filepath"
 
@@ -204,7 +203,11 @@ func (h *LoginHandler) InitFirst(ctx *gin.Context) {
 	kv := model.KV{}
 	db.Where("key = 'FIRST_INIT'").First(&kv)
 	if kv.Value == "TRUE" || fileUtils.Exists(firstInitMarkerPath()) {
-		log.Panicln("非法请求")
+		ctx.JSON(http.StatusBadRequest, response.Response{
+			Code: 400,
+			Msg:  "系统已初始化，不可重复初始化",
+		})
+		return
 	}
 	var payload struct {
 		UserInfo login.UserInfo `json:"userInfo"`
@@ -216,6 +219,7 @@ func (h *LoginHandler) InitFirst(ctx *gin.Context) {
 			Msg:  "Invalid request body: " + err.Error(),
 			Data: nil,
 		})
+		return
 	}
 	// 事务
 	// 记录已经初始化
@@ -231,6 +235,7 @@ func (h *LoginHandler) InitFirst(ctx *gin.Context) {
 			Msg:  "初始化失败: " + err.Error(),
 			Data: nil,
 		})
+		return
 	}
 	ctx.JSON(http.StatusOK, response.Response{
 		Code: 200,

@@ -86,6 +86,6 @@ func (h *DstConfigHandler) SaveDstConfig(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, response.Response{
 		Code: 200,
 		Msg:  "DstConfig saved successfully",
-		Data: nil,
+		Data: config,
 	})
 }

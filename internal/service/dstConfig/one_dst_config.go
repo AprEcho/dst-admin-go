@@ -175,7 +175,7 @@ func (o *OneDstConfig) GetDstConfig(clusterName string) (DstConfig, error) {
 	if dstConfig.Bin == 0 {
 		dstConfig.Bin = 32
 	}
-	dstConfig.ContainerMode = os.Getenv("DST_ADMIN_CONTAINER_MODE") == "true"
+	dstConfig.ContainerMode = false
 	return dstConfig, nil
 }
 

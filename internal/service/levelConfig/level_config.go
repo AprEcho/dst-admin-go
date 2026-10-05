@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type Item struct {
@@ -102,65 +103,105 @@ func (p *LevelConfigUtils) GetLevelConfig(clusterName string) (*LevelConfig, err
 	clusterBasePath := p.archive.ClusterPath(clusterName)
 	jsonPath := filepath.Join(clusterBasePath, "level.json")
 	fileUtils.CreateDirIfNotExists(clusterBasePath)
-	// fileUtils.CreateFileIfNotExists(jsonPath)
-	if !fileUtils.Exists(jsonPath) {
-		fileUtils.CreateFile(jsonPath)
-		fileUtils.WriterTXT(jsonPath, "{}")
-	}
-	// 打开JSON文件
-	file, err := os.Open(jsonPath)
-	if err != nil {
-		log.Println("无法打开level.json文件:", err)
-		return nil, err
-	}
-	defer file.Close()
 
-	// 解码JSON数据
 	var config LevelConfig
-	decoder := json.NewDecoder(file)
-	err = decoder.Decode(&config)
-	if err != nil {
-		log.Println("无法解析level.json文件:", err)
-		return nil, err
-	}
-
-	if len(config.LevelList) == 0 {
-		masterLevelPath := filepath.Join(clusterBasePath, "Master")
-		if !fileUtils.Exists(masterLevelPath) {
-			master := LevelInfo{
-				IsMaster:          true,
-				LevelName:         "Forest",
-				Uuid:              "Master",
-				Leveldataoverride: "return {}",
-				Modoverrides:      "return {}",
-				ServerIni:         NewMasterServerIni(),
-			}
-			p.initLevel(filepath.Join(clusterBasePath, "Master"), &master)
-			config.LevelList = append(config.LevelList, Item{
-				Name: "Forest",
-				File: "Master",
-			})
-			err = p.SaveLevelConfig(clusterName, &config)
-			if err != nil {
-				log.Println(err)
-			}
-		} else {
-			config.LevelList = append(config.LevelList, Item{
-				Name: "Forest",
-				File: "Master",
-			})
-			cavesLevelPath := filepath.Join(clusterBasePath, "Caves")
-			if fileUtils.Exists(cavesLevelPath) {
-				config.LevelList = append(config.LevelList, Item{
-					Name: "Caves",
-					File: "Caves",
-				})
-			}
-			err = p.SaveLevelConfig(clusterName, &config)
-			if err != nil {
-				log.Println(err)
+	hasJson := false
+	if fileUtils.Exists(jsonPath) {
+		data, err := os.ReadFile(jsonPath)
+		if err == nil && len(data) > 0 {
+			if err := json.Unmarshal(data, &config); err == nil {
+				hasJson = true
 			}
 		}
+	}
+
+	// 规范化已有项目的名称（将英文 "Forest" 转为 "地面"，"Caves" 转为 "洞穴"）并记录索引
+	existingFiles := make(map[string]bool)
+	for i := range config.LevelList {
+		if config.LevelList[i].File == "Master" && (config.LevelList[i].Name == "Forest" || config.LevelList[i].Name == "") {
+			config.LevelList[i].Name = "地面"
+		}
+		if config.LevelList[i].File == "Caves" && (config.LevelList[i].Name == "Caves" || config.LevelList[i].Name == "") {
+			config.LevelList[i].Name = "洞穴"
+		}
+		existingFiles[config.LevelList[i].File] = true
+	}
+
+	changed := false
+
+	// 1. 检测 Master
+	masterPath := filepath.Join(clusterBasePath, "Master")
+	if fileUtils.Exists(masterPath) {
+		if !existingFiles["Master"] {
+			config.LevelList = append([]Item{{
+				Name: "地面",
+				File: "Master",
+			}}, config.LevelList...)
+			existingFiles["Master"] = true
+			changed = true
+		}
+	} else if len(config.LevelList) == 0 {
+		// 磁盘上既没有 Master 也没有任何关卡配置时，初始化默认 Master
+		master := LevelInfo{
+			IsMaster:          true,
+			LevelName:         "地面",
+			Uuid:              "Master",
+			Leveldataoverride: "return {}",
+			Modoverrides:      "return {}",
+			ServerIni:         NewMasterServerIni(),
+		}
+		p.initLevel(masterPath, &master)
+		config.LevelList = append(config.LevelList, Item{
+			Name: "地面",
+			File: "Master",
+		})
+		existingFiles["Master"] = true
+		changed = true
+	}
+
+	// 2. 检测 Caves (同时兼顾大小写 Caves / caves)
+	cavesDirName := ""
+	if fileUtils.Exists(filepath.Join(clusterBasePath, "Caves")) {
+		cavesDirName = "Caves"
+	} else if fileUtils.Exists(filepath.Join(clusterBasePath, "caves")) {
+		cavesDirName = "caves"
+	}
+	if cavesDirName != "" {
+		if !existingFiles[cavesDirName] && !existingFiles["Caves"] && !existingFiles["caves"] {
+			config.LevelList = append(config.LevelList, Item{
+				Name: "洞穴",
+				File: cavesDirName,
+			})
+			existingFiles[cavesDirName] = true
+			changed = true
+		}
+	}
+
+	// 3. 扫描 clusterBasePath 下所有包含 server.ini 的其它分片子目录（支持自定义多层世界）
+	if entries, err := os.ReadDir(clusterBasePath); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				name := entry.Name()
+				if strings.EqualFold(name, "Master") || strings.EqualFold(name, "Caves") || name == "save" || name == "backup" {
+					continue
+				}
+				if fileUtils.Exists(filepath.Join(clusterBasePath, name, "server.ini")) {
+					if !existingFiles[name] {
+						config.LevelList = append(config.LevelList, Item{
+							Name: name,
+							File: name,
+						})
+						existingFiles[name] = true
+						changed = true
+					}
+				}
+			}
+		}
+	}
+
+	// 如果 level.json 不存在或者有增补/修复，持久化回 level.json
+	if !hasJson || changed {
+		_ = p.SaveLevelConfig(clusterName, &config)
 	}
 
 	return &config, nil
@@ -169,19 +210,12 @@ func (p *LevelConfigUtils) GetLevelConfig(clusterName string) (*LevelConfig, err
 func (p *LevelConfigUtils) SaveLevelConfig(clusterName string, levelConfig *LevelConfig) error {
 	clusterBasePath := p.archive.ClusterPath(clusterName)
 	jsonPath := filepath.Join(clusterBasePath, "level.json")
-	fileUtils.CreateFileIfNotExists(jsonPath)
-	// 打开JSON文件
-	file, err := os.Open(jsonPath)
+	fileUtils.CreateDirIfNotExists(clusterBasePath)
+
+	bytes, err := json.MarshalIndent(levelConfig, "", "  ")
 	if err != nil {
-		log.Println("无法打开level.json文件:", err)
+		log.Println("json 解析错误:", err)
 		return err
 	}
-	defer file.Close()
-
-	bytes, err := json.Marshal(levelConfig)
-	if err != nil {
-		log.Println("json 解析错误")
-	}
-	fileUtils.WriterTXT(jsonPath, string(bytes))
-	return err
+	return os.WriteFile(jsonPath, bytes, 0644)
 }

@@ -80,11 +80,5 @@ EXPOSE 10998/udp
 # 饥荒森林世界的端口
 EXPOSE 10999/udp
 
-# Marks this image as a container build so the panel can lock the Settings
-# fields that correspond to fixed image paths (steamcmd, force_install_dir,
-# cluster) instead of letting them silently drift out of sync with what
-# actually exists on disk -- see internal/service/dstConfig/dst_config.go.
-ENV DST_ADMIN_CONTAINER_MODE=true
-
 # 运行命令
 ENTRYPOINT ["./docker-entrypoint.sh"]

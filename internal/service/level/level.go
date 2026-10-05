@@ -11,6 +11,7 @@ import (
 	"log"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-ini/ini"
@@ -41,52 +42,6 @@ func (l *LevelService) GetLevelList(clusterName string) []levelConfig.LevelInfo 
 		return []levelConfig.LevelInfo{}
 	}
 	var levels []levelConfig.LevelInfo
-	if len(config.LevelList) == 0 {
-		masterLevelPath := filepath.Join(l.resolver.ClusterPath(clusterName), "Master")
-		if !fileUtils.Exists(masterLevelPath) {
-			master := levelConfig.LevelInfo{
-				IsMaster:          true,
-				LevelName:         "Forest",
-				Uuid:              "Master",
-				Leveldataoverride: "return {}",
-				Modoverrides:      "return {}",
-				ServerIni:         levelConfig.NewMasterServerIni(),
-			}
-			l.initLevel(filepath.Join(l.resolver.ClusterPath(clusterName), "Master"), &master)
-			levels = append([]levelConfig.LevelInfo{}, master)
-			config.LevelList = append(config.LevelList, levelConfig.Item{
-				Name: "Forest",
-				File: "Master",
-			})
-			err = l.levelConfigUtils.SaveLevelConfig(clusterName, config)
-			if err != nil {
-				log.Println(err)
-			}
-			return levels
-		} else {
-			// 读取现有的 Master 世界配置
-			master := l.GetLevel(clusterName, "Master")
-			levels = append([]levelConfig.LevelInfo{}, master)
-			config.LevelList = append(config.LevelList, levelConfig.Item{
-				Name: "Forest",
-				File: "Master",
-			})
-			cavesLevelPath := filepath.Join(l.resolver.ClusterPath(clusterName), "Caves")
-			if fileUtils.Exists(cavesLevelPath) {
-				config.LevelList = append(config.LevelList, levelConfig.Item{
-					Name: "Caves",
-					File: "Caves",
-				})
-				caves := l.GetLevel(clusterName, "Caves")
-				levels = append(levels, caves)
-			}
-			err = l.levelConfigUtils.SaveLevelConfig(clusterName, config)
-			if err != nil {
-				log.Println(err)
-			}
-			return levels
-		}
-	}
 	for i := range config.LevelList {
 		level1 := levelConfig.LevelInfo{}
 		level1.LevelName = config.LevelList[i].Name
@@ -111,6 +66,15 @@ func (l *LevelService) GetLevel(clusterName string, levelName string) levelConfi
 			name = item.Name
 		}
 	}
+	if name == "" {
+		if strings.EqualFold(levelName, "Master") {
+			name = "地面"
+		} else if strings.EqualFold(levelName, "Caves") {
+			name = "洞穴"
+		} else {
+			name = levelName
+		}
+	}
 
 	// 读取 leveldataoverride.lua
 	lPath := filepath.Join(levelFolderPath, "leveldataoverride.lua")
@@ -128,10 +92,10 @@ func (l *LevelService) GetLevel(clusterName string, levelName string) levelConfi
 
 	// 读取 server.ini
 	sPath := filepath.Join(levelFolderPath, "server.ini")
-	serverIni := l.GetServerIni(sPath, levelName == "Master")
+	serverIni := l.GetServerIni(sPath, strings.EqualFold(levelName, "Master"))
 
 	return levelConfig.LevelInfo{
-		IsMaster:          levelName == "Master",
+		IsMaster:          serverIni.IsMaster,
 		LevelName:         name,
 		Uuid:              levelName,
 		Leveldataoverride: leveldataoverride,

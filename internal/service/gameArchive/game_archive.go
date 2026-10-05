@@ -119,7 +119,11 @@ func (d *GameArchive) GetGameArchive(clusterName string) GameArchiveInfo {
 
 	// 获取mod数量
 	go func() {
-		masterModoverrides, err := fileUtils.ReadFile(path.Join(basePath, "Master", "modoverrides.lua"))
+		masterModPath := path.Join(basePath, "Master", "modoverrides.lua")
+		if !fileUtils.Exists(masterModPath) {
+			masterModPath = path.Join(basePath, "master", "modoverrides.lua")
+		}
+		masterModoverrides, err := fileUtils.ReadFile(masterModPath)
 		if err != nil {
 			gameArchie.Mods = 0
 		} else {
@@ -148,7 +152,11 @@ func (d *GameArchive) GetGameArchive(clusterName string) GameArchiveInfo {
 		}()
 		clusterIni, _ := d.gameConfig.GetClusterIni(clusterName)
 		password := clusterIni.ClusterPassword
-		serverIni := d.level.GetServerIni(path.Join(basePath, "Master", "server.ini"), true)
+		serverIniPath := path.Join(basePath, "Master", "server.ini")
+		if !fileUtils.Exists(serverIniPath) {
+			serverIniPath = path.Join(basePath, "master", "server.ini")
+		}
+		serverIni := d.level.GetServerIni(serverIniPath, true)
 		wanip := config.Cfg.WanIP
 		if wanip != "" {
 
@@ -348,7 +356,11 @@ func findLatestMetaFile(directory string) (string, error) {
 }
 
 func (d *GameArchive) Snapshoot(clusterName string) Meta {
-	sessionPath := filepath.Join(d.archive.KleiBasePath(clusterName), clusterName, "Master", "save", "session")
+	base := filepath.Join(d.archive.KleiBasePath(clusterName), clusterName)
+	sessionPath := filepath.Join(base, "Master", "save", "session")
+	if !fileUtils.Exists(sessionPath) {
+		sessionPath = filepath.Join(base, "master", "save", "session")
+	}
 	p, err := findLatestMetaFile(sessionPath)
 	if err != nil {
 		fmt.Println("查找meta文件失败", err)

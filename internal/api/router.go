@@ -20,6 +20,7 @@ import (
 	"dst-admin-go/internal/service/schedule"
 	"dst-admin-go/internal/service/update"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -83,6 +84,37 @@ func RegisterStaticFile(app *gin.Engine) {
 
 	miscGroup := app.Group("/misc", staticCache)
 	miscGroup.Static("", "./dist/misc")
+
+	// 限制世界模板预设仅展示官方经典标准世界
+	app.GET("/misc/preinstall.json", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
+		if _, err := os.Stat("./misc/preinstall.json"); err == nil {
+			c.File("./misc/preinstall.json")
+			return
+		}
+		if _, err := os.Stat("./dist/misc/preinstall.json"); err == nil {
+			c.File("./dist/misc/preinstall.json")
+			return
+		}
+		c.JSON(200, []gin.H{
+			{
+				"key":         "standard",
+				"name":        "标准世界",
+				"description": "森林和洞穴（官方经典原版）",
+				"value":       "森林和洞穴",
+				"src":         "https://gw.alipayobjects.com/zos/bmw-prod/2dd637c7-5f50-4d89-a819-33b3d6da73b6.svg",
+			},
+			{
+				"key":         "afk",
+				"name":        "挂机服",
+				"description": "Super AFK 挂机防踢模组(1981709850)",
+				"value":       "挂机",
+				"src":         "https://steamuserimages-a.akamaihd.net/ugc/777372679602930721/459044D5E7B793F62C653A1FF862A76B12EEA05A/?imw=268&imh=268&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=true",
+			},
+		})
+	})
 
 	staticJsGroup := app.Group("/static/js", staticCache)
 	staticJsGroup.Static("", "./dist/static/js")
@@ -151,6 +183,7 @@ func Register(cfg *config.Config, db *gorm.DB, router *gin.RouterGroup) {
 	statisticsHandler := handler.NewStatisticsHandler()
 	modHandler := handler.NewModHandler(modService, dstConfigService)
 	scheduleHandler := handler.NewScheduleHandler(scheduleService)
+	preinstallHandler := handler.NewPreinstallHandler(gameProcess, backupService, resolverService, dstConfigService, levelConfigUtils, levelService)
 
 	// 中间件
 	// 针对所有 API 路由强制设置无缓存响应头，杜绝浏览器对 GET 请求产生任何 disk/memory cache
@@ -180,5 +213,6 @@ func Register(cfg *config.Config, db *gorm.DB, router *gin.RouterGroup) {
 	statisticsHandler.RegisterRoute(router)
 	modHandler.RegisterRoute(router)
 	scheduleHandler.RegisterRoute(router)
+	preinstallHandler.RegisterRoute(router)
 
 }

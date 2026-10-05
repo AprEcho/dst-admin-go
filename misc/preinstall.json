@@ -1,0 +1,16 @@
+[
+  {
+    "key": "standard",
+    "name": "标准世界",
+    "description": "森林和洞穴（官方经典原版）",
+    "value": "森林和洞穴",
+    "src": "https://gw.alipayobjects.com/zos/bmw-prod/2dd637c7-5f50-4d89-a819-33b3d6da73b6.svg"
+  },
+  {
+    "key": "afk",
+    "name": "挂机服",
+    "description": "Super AFK 挂机防踢模组(1981709850)",
+    "value": "挂机",
+    "src": "https://steamuserimages-a.akamaihd.net/ugc/777372679602930721/459044D5E7B793F62C653A1FF862A76B12EEA05A/?imw=268&imh=268&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=true"
+  }
+]

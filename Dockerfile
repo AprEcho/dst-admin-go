@@ -63,6 +63,8 @@ COPY scripts/docker/docker_dst_config /app/docker_dst_config.default
 
 # 拷贝前端产物与静态资源
 COPY --from=frontend-builder /web/dist /app/dist
+COPY misc /app/misc
+COPY misc/preinstall.json /app/dist/misc/preinstall.json
 COPY static /app/static
 
 EXPOSE 8082/tcp

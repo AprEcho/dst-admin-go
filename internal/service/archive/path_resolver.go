@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -195,9 +196,22 @@ func (r *PathResolver) GetLocalDstVersion(clusterName string) (int64, error) {
 	return r.dstVersion(versionTextPath)
 }
 
+var (
+	cachedDstVersion   int64
+	cachedDstVersionAt time.Time
+	dstVersionMutex    sync.RWMutex
+)
+
 func (r *PathResolver) GetLastDstVersion() (int64, error) {
+	dstVersionMutex.RLock()
+	if cachedDstVersion > 0 && time.Since(cachedDstVersionAt) < 30*time.Minute {
+		defer dstVersionMutex.RUnlock()
+		return cachedDstVersion, nil
+	}
+	dstVersionMutex.RUnlock()
+
 	url := config.Cfg.DstVersionUrl
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
 		log.Println(err)
@@ -214,7 +228,14 @@ func (r *PathResolver) GetLastDstVersion() (int64, error) {
 	if err != nil {
 		veriosn = 0
 	}
-	return int64(veriosn), nil
+	res := int64(veriosn)
+	if res > 0 {
+		dstVersionMutex.Lock()
+		cachedDstVersion = res
+		cachedDstVersionAt = time.Now()
+		dstVersionMutex.Unlock()
+	}
+	return res, nil
 }
 
 func (r *PathResolver) dstVersion(versionTextPath string) (int64, error) {

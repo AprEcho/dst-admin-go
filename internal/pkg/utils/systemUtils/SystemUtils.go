@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/disk"
@@ -159,15 +160,26 @@ func GetCpuInfo() *CpuInfo {
 	return cpuInfo
 }
 
-func GetHostInfo() *HostInfo {
-	info, _ := host.Info()
+var (
+	cachedHostInfo *HostInfo
+	hostInfoOnce   sync.Once
+)
 
-	return &HostInfo{
-		Os:         info.OS,
-		HostName:   info.Hostname,
-		Platform:   info.Platform,
-		KernelArch: info.KernelArch,
-	}
+func GetHostInfo() *HostInfo {
+	hostInfoOnce.Do(func() {
+		info, err := host.Info()
+		if err == nil && info != nil {
+			cachedHostInfo = &HostInfo{
+				Os:         info.OS,
+				HostName:   info.Hostname,
+				Platform:   info.Platform,
+				KernelArch: info.KernelArch,
+			}
+		} else {
+			cachedHostInfo = &HostInfo{}
+		}
+	})
+	return cachedHostInfo
 }
 
 func GetMemInfo() *MemInfo {

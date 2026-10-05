@@ -62,6 +62,8 @@ func steamIDFromAuthor(author string) string {
 	return ""
 }
 
+var steamPersonaNameCache sync.Map // map[string]string
+
 func fetchSteamPersonaNames(steamIDs []string) map[string]string {
 	result := make(map[string]string)
 	seen := make(map[string]bool)
@@ -72,13 +74,17 @@ func fetchSteamPersonaNames(steamIDs []string) map[string]string {
 			continue
 		}
 		seen[steamID] = true
+		if val, ok := steamPersonaNameCache.Load(steamID); ok {
+			result[steamID] = val.(string)
+			continue
+		}
 		unique = append(unique, steamID)
 	}
 	if len(unique) == 0 {
 		return result
 	}
 
-	client := &http.Client{Timeout: 8 * time.Second}
+	client := &http.Client{Timeout: 3 * time.Second}
 	for i := 0; i < len(unique); i += 100 {
 		end := i + 100
 		if end > len(unique) {
@@ -108,6 +114,7 @@ func fetchSteamPersonaNames(steamIDs []string) map[string]string {
 			for _, player := range payload.Response.Players {
 				if player.SteamID != "" && player.PersonaName != "" {
 					result[player.SteamID] = player.PersonaName
+					steamPersonaNameCache.Store(player.SteamID, player.PersonaName)
 				}
 			}
 		}()

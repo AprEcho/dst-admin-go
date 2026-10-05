@@ -108,17 +108,28 @@ func (d *GameArchive) GetGameArchive(clusterName string) GameArchiveInfo {
 
 	// 获取基础信息
 	go func() {
+		defer func() {
+			wg.Done()
+			if r := recover(); r != nil {
+				fmt.Println("GetClusterIni panic:", r)
+			}
+		}()
 		clusterIni, _ := d.gameConfig.GetClusterIni(clusterName)
 		gameArchie.ClusterName = clusterIni.ClusterName
 		gameArchie.ClusterDescription = clusterIni.ClusterDescription
 		gameArchie.ClusterPassword = clusterIni.ClusterPassword
 		gameArchie.GameMod = clusterIni.GameMode
 		gameArchie.MaxPlayers = int(clusterIni.MaxPlayers)
-		wg.Done()
 	}()
 
 	// 获取mod数量
 	go func() {
+		defer func() {
+			wg.Done()
+			if r := recover(); r != nil {
+				fmt.Println("GetModCount panic:", r)
+			}
+		}()
 		masterModPath := path.Join(basePath, "Master", "modoverrides.lua")
 		if !fileUtils.Exists(masterModPath) {
 			masterModPath = path.Join(basePath, "master", "modoverrides.lua")
@@ -129,7 +140,6 @@ func (d *GameArchive) GetGameArchive(clusterName string) GameArchiveInfo {
 		} else {
 			gameArchie.Mods = len(dstUtils.WorkshopIds(masterModoverrides))
 		}
-		wg.Done()
 	}()
 
 	// 获取天数和季节
@@ -202,45 +212,84 @@ func (d *GameArchive) GetGameArchive(clusterName string) GameArchiveInfo {
 	return gameArchie
 }
 
+var (
+	cachedPublicIP   string
+	cachedPublicIPAt time.Time
+	publicIPMutex    sync.RWMutex
+)
+
 /*
 - 以下均是公开接口，返回纯文本数据
-- 如果服务端有透明代理或者分流，可能获取到的是代理ip，优先使用能获取真实ip的接口
+- 增加内存缓存与并发竞速获取，避免每次页面请求串行超时卡死
 - 饥荒暂不支持IPv6
 */
 func (d *GameArchive) GetPublicIP() (string, error) {
-	apis := [...]string{
-		// == 以下优先返回国内ip ==
+	publicIPMutex.RLock()
+	if cachedPublicIP != "" && time.Since(cachedPublicIPAt) < 15*time.Minute {
+		defer publicIPMutex.RUnlock()
+		return cachedPublicIP, nil
+	}
+	publicIPMutex.RUnlock()
+
+	apis := []string{
+		// == 优先返回国内ip ==
 		"https://myip.ipip.net",
-		"https://cdid.c-ctrip.com/model-poc2/h", // 某携程api，IPv6优先
-		// == 以下优先返回国外ip ==
-		"https://lobby-v2.klei.com/lobby/getIP", // Klei官方api
+		"https://cdid.c-ctrip.com/model-poc2/h",
+		// == 国外ip接口 ==
+		"https://lobby-v2.klei.com/lobby/getIP",
 		"https://api.ipify.org",
 		"https://ifconfig.me/ip",
 		"https://checkip.amazonaws.com",
 	}
 
 	client := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout: 3 * time.Second,
 	}
 
-	for _, api := range apis {
-		resp, err := client.Get(api)
-		if err != nil {
-			continue
-		}
-		body, err := ioutil.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			continue
-		}
+	ch := make(chan string, len(apis))
+	var ipWg sync.WaitGroup
+	ipv4Regex := regexp.MustCompile(`\b\d{1,3}(\.\d{1,3}){3}\b`)
 
-		ipv4Regex := regexp.MustCompile(`\b\d{1,3}(\.\d{1,3}){3}\b`)
-		text := strings.TrimSpace(string(body))
-		if match := ipv4Regex.FindString(text); match != "" {
-			if ip := net.ParseIP(match); ip != nil && ip.To4() != nil {
-				return ip.String(), nil
+	for _, api := range apis {
+		ipWg.Add(1)
+		go func(url string) {
+			defer ipWg.Done()
+			resp, err := client.Get(url)
+			if err != nil {
+				return
 			}
+			body, err := ioutil.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if err != nil {
+				return
+			}
+			text := strings.TrimSpace(string(body))
+			if match := ipv4Regex.FindString(text); match != "" {
+				if ip := net.ParseIP(match); ip != nil && ip.To4() != nil {
+					select {
+					case ch <- match:
+					default:
+					}
+				}
+			}
+		}(api)
+	}
+
+	go func() {
+		ipWg.Wait()
+		close(ch)
+	}()
+
+	select {
+	case ip := <-ch:
+		if ip != "" {
+			publicIPMutex.Lock()
+			cachedPublicIP = ip
+			cachedPublicIPAt = time.Now()
+			publicIPMutex.Unlock()
+			return ip, nil
 		}
+	case <-time.After(3 * time.Second):
 	}
 
 	return "", nil

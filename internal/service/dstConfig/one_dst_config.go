@@ -169,6 +169,9 @@ func (o *OneDstConfig) GetDstConfig(clusterName string) (DstConfig, error) {
 		fileUtils.CreateDirIfNotExists(defaultPath)
 		dstConfig.Mod_download_path = defaultPath
 	}
+	if dstConfig.Ugc_directory == "" && dstConfig.Mod_download_path != "" {
+		dstConfig.Ugc_directory = filepath.Join(dstConfig.Mod_download_path, "steamapps", "workshop")
+	}
 	if dstConfig.Bin == 0 {
 		dstConfig.Bin = 32
 	}

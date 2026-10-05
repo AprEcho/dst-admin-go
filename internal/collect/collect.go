@@ -8,9 +8,27 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hpcloud/tail"
+)
+
+var (
+	// 匹配日志行首时间戳: [00:01:53]:
+	reLogTime = regexp.MustCompile(`^\[([^\]]+)\]:`)
+
+	// 匹配连接 IP (兼容 Client connected from 与 New incoming connection，过滤端口):
+	reClientIP = regexp.MustCompile(`(?:Client connected from|New incoming connection)\s+(?:\[LAN\]\s+)?([0-9.]+)(?:\|[0-9]+)?`)
+
+	// 匹配 KuId 和 玩家昵称 (支持包含空格的昵称):
+	reClientAuth = regexp.MustCompile(`Client authenticated:\s*\((KU_[^)]+)\)\s+(.+)`)
+
+	// 匹配 SteamID: [Steam] Authenticated client '76561198xxxxxxxxx'
+	reSteamAuth = regexp.MustCompile(`Authenticated client\s*'(\d+)'`)
+
+	// 匹配 Session 文件路径
+	reSession = regexp.MustCompile(`(?:Resuming|Serializing) user:\s*session/(.+)`)
 )
 
 var Collector *Collect
@@ -22,20 +40,27 @@ type Collect struct {
 	serverChatLogList []string
 	length            int
 	clusterName       string
+	mu                sync.Mutex
+	lastIncomingIP    string
+	lastIncomingTime  time.Time
 }
 
 func NewCollect(baseLogPath string, clusterName string) *Collect {
+	severLogList := []string{
+		filepath.Join(baseLogPath, "Master", "server_log.txt"),
+		filepath.Join(baseLogPath, "Caves", "server_log.txt"),
+	}
+	serverChatLogList := []string{
+		filepath.Join(baseLogPath, "Master", "server_chat_log.txt"),
+	}
+	total := len(severLogList) + len(serverChatLogList)
 	collect := &Collect{
-		state: make(chan int, 1),
-		severLogList: []string{
-			filepath.Join(baseLogPath, "Master", "server_log.txt"),
-		},
-		serverChatLogList: []string{
-			filepath.Join(baseLogPath, "Master", "server_chat_log.txt"),
-		},
-		stop:        make(chan bool, 2),
-		length:      2,
-		clusterName: clusterName,
+		state:             make(chan int, 1),
+		severLogList:      severLogList,
+		serverChatLogList: serverChatLogList,
+		stop:              make(chan bool, total),
+		length:            total,
+		clusterName:       clusterName,
 	}
 	collect.state <- 1
 	return collect
@@ -51,10 +76,13 @@ func (c *Collect) ReCollect(baseLogPath, clusterName string) {
 	}
 	c.severLogList = []string{
 		filepath.Join(baseLogPath, "Master", "server_log.txt"),
+		filepath.Join(baseLogPath, "Caves", "server_log.txt"),
 	}
 	c.serverChatLogList = []string{
 		filepath.Join(baseLogPath, "Master", "server_chat_log.txt"),
 	}
+	c.length = len(c.severLogList) + len(c.serverChatLogList)
+	c.stop = make(chan bool, c.length)
 	c.clusterName = clusterName
 	c.state <- 1
 }
@@ -121,97 +149,102 @@ func (c *Collect) parseRegenerateLog(text string) {
 	database.Db.Create(&regenerate)
 }
 
-func (c *Collect) parseNewIncomingLog(lines []string) {
-
+func (c *Collect) handleServerLogLine(text string) {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Println("new incoming 日志解析异常:", err)
+			log.Println("server log 解析异常:", err, "line:", text)
 		}
 	}()
-	connect := model.Connect{}
-	log.Println("len:", len(lines), lines)
-	for i, line := range lines {
-		if i == 1 {
-			// 解析 ip
-			str := strings.Split(line, " ")
-			if len(str) < 5 {
-				log.Println("ip 解析错误: ", line)
-				connect.Ip = ""
-			} else {
-				var ip string
-				if strings.Contains(line, "[LAN]") {
-					ip = str[5]
-				} else {
-					ip = str[4]
-				}
-				connect.Ip = ip
-				fmt.Println("ip", ip)
-			}
-		}
-		if i == 2 {
-			// 解析 ip
-		}
-		if i == 3 {
-			// 解析 KuId 和 用户名
-			str := strings.Split(line, " ")
-			if len(str) <= 4 {
-				log.Println("kuid 解析错误: ", line)
-			} else {
-				ku := str[3]
-				ku = ku[1 : len(ku)-1]
-				name := str[4]
-				connect.Name = name
-				connect.KuId = ku
-				fmt.Println("ku", ku, "name", name)
-			}
-		}
-		if i == 4 {
-			// 解析 steamId
-			str := strings.Split(line, " ")
-			if len(str) < 4 {
-				log.Println("steamid 解析错误: ", line)
-			} else {
-				steamId := str[4]
-				steamId = steamId[1 : len(steamId)-1]
-				fmt.Println("steamId", steamId)
-				connect.SteamId = steamId
-				connect.ClusterName = c.clusterName
-			}
-		}
-		if strings.Contains(line, "Resuming user:") {
-			// 解析 session file path
-			str := strings.Split(line, " ")
-			log.Println(len(str), lines)
-			//[00:14:37]: Resuming user: session/7477D5E4A0424844/KU_Mt-zrX8K_
-			if len(str) < 4 {
-				log.Println("session file path 解析错误: ", line)
-			} else {
-				name := str[3]
-				name = strings.Replace(name, "session/", "", -1)
-				connect.SessionFile = name
-			}
-		}
-		// [03:19:10]: Serializing user: session/D480EA2CEF7633C0/KU_Mt-zrX8K_/0000000005
-		if strings.Contains(line, "Serializing user:") {
-			// 解析 session file path
-			str := strings.Split(line, " ")
-			log.Println(len(str), lines)
-			//[00:14:37]: Resuming user: session/7477D5E4A0424844/KU_Mt-zrX8K_
-			if len(str) < 4 {
-				log.Println("session file path 解析错误: ", line)
-			} else {
-				name := str[3]
-				name = strings.Replace(name, "session/", "", -1)
-				connect.SessionFile = name
-			}
 
-		}
+	if strings.Contains(text, "Spawn request") {
+		c.parseSpawnRequestLog(text)
+		return
 	}
-	database.Db.Create(&connect)
+	if strings.Contains(text, "# Generating") {
+		c.parseRegenerateLog(text)
+		return
+	}
+
+	// 1. 匹配连接 IP (Client connected from 或 New incoming connection，过滤端口):
+	if m := reClientIP.FindStringSubmatch(text); len(m) >= 2 {
+		ip := m[1]
+		c.mu.Lock()
+		c.lastIncomingIP = ip
+		c.lastIncomingTime = time.Now()
+		c.mu.Unlock()
+		log.Println("捕获连接 IP:", ip)
+		return
+	}
+
+	// 2. 匹配 KuId 和 玩家昵称 (支持空格): Client authenticated: (KU_xxx) Name
+	if m := reClientAuth.FindStringSubmatch(text); len(m) >= 3 {
+		kuId := m[1]
+		name := strings.TrimSpace(m[2])
+		timeStr := ""
+		if tMatch := reLogTime.FindStringSubmatch(text); len(tMatch) >= 2 {
+			timeStr = tMatch[1]
+		}
+
+		c.mu.Lock()
+		ip := ""
+		if time.Since(c.lastIncomingTime) < 60*time.Second {
+			ip = c.lastIncomingIP
+		}
+		c.mu.Unlock()
+
+		log.Printf("捕获玩家认证: KuId=%s, Name=%s, IP=%s\n", kuId, name, ip)
+
+		var connect model.Connect
+		err := database.Db.Where("ku_id = ? AND cluster_name = ?", kuId, c.clusterName).Last(&connect).Error
+		if err == nil && connect.ID != 0 {
+			connect.Name = name
+			if ip != "" {
+				connect.Ip = ip
+			}
+			if timeStr != "" {
+				connect.Time = timeStr
+			}
+			database.Db.Save(&connect)
+		} else {
+			connect = model.Connect{
+				Ip:          ip,
+				Name:        name,
+				KuId:        kuId,
+				Time:        timeStr,
+				ClusterName: c.clusterName,
+			}
+			database.Db.Create(&connect)
+		}
+		return
+	}
+
+	// 3. 匹配 SteamId: Authenticated client '76561198xxxxxxxxx'
+	if m := reSteamAuth.FindStringSubmatch(text); len(m) >= 2 {
+		steamId := m[1]
+		log.Println("捕获 SteamId:", steamId)
+		var connect model.Connect
+		err := database.Db.Where("cluster_name = ?", c.clusterName).Last(&connect).Error
+		if err == nil && connect.ID != 0 {
+			connect.SteamId = steamId
+			database.Db.Save(&connect)
+		}
+		return
+	}
+
+	// 4. 匹配 SessionFile: Resuming/Serializing user: session/...
+	if m := reSession.FindStringSubmatch(text); len(m) >= 2 {
+		sessionFile := m[1]
+		var connect model.Connect
+		err := database.Db.Where("cluster_name = ?", c.clusterName).Last(&connect).Error
+		if err == nil && connect.ID != 0 {
+			connect.SessionFile = sessionFile
+			database.Db.Save(&connect)
+		}
+		return
+	}
 }
 
 func (c *Collect) tailServeLog(fileName string) {
-
 	log.Println("开始采集 path:", fileName)
 	config := tail.Config{
 		ReOpen:    true,                                 // 重新打开
@@ -223,38 +256,16 @@ func (c *Collect) tailServeLog(fileName string) {
 	tails, err := tail.TailFile(fileName, config)
 	if err != nil {
 		log.Println("文件监听失败", err)
+		return
 	}
-	var (
-		which        = 0
-		isNewConnect = false
-		incoming     []string
-	)
 	for {
 		select {
 		case line, ok := <-tails.Lines:
 			if !ok {
-				log.Println("文件读取失败", err)
+				log.Println("文件读取失败", fileName)
 				time.Sleep(time.Second)
 			} else {
-				text := line.Text
-				if find := strings.Contains(text, "Spawn request"); find {
-					c.parseSpawnRequestLog(text)
-				} else if find := strings.Contains(text, "# Generating"); find {
-					c.parseRegenerateLog(text)
-				} else if find := strings.Contains(text, "New incoming connection"); find {
-					isNewConnect = true
-				}
-				// 获取接下来的五条数据
-				if isNewConnect {
-					incoming = append(incoming, text)
-					which++
-					if which > 10 {
-						isNewConnect = false
-						which = 0
-						c.parseNewIncomingLog(incoming)
-						incoming = []string{}
-					}
-				}
+				c.handleServerLogLine(line.Text)
 			}
 		case <-c.stop:
 			// 结束监听
@@ -323,6 +334,18 @@ func (c *Collect) parseSay(text string) {
 	// 获取玩家角色和连接信息
 	spawn := c.getSpawnRole(name)
 	connect := c.getConnectInfo(name)
+
+	// 聊天日志包含 KuId，若 connects 表中未录入或缺失 KuId 则自动补录/更新
+	if kuId != "" && (connect.ID == 0 || connect.KuId == "") {
+		connect.KuId = kuId
+		connect.Name = name
+		connect.ClusterName = c.clusterName
+		if connect.ID == 0 {
+			database.Db.Create(connect)
+		} else {
+			database.Db.Save(connect)
+		}
+	}
 
 	playerLog := model.PlayerLog{
 		Name:        name,
@@ -506,6 +529,9 @@ func (c *Collect) getSpawnRole(name string) *model.Spawn {
 
 func (c *Collect) getConnectInfo(name string) *model.Connect {
 	connect := new(model.Connect)
+	if err := database.Db.Where("name = ? and cluster_name = ?", name, c.clusterName).Last(connect).Error; err == nil && connect.ID != 0 {
+		return connect
+	}
 	database.Db.Where("name LIKE ? and cluster_name = ?", "%"+name+"%", c.clusterName).Last(connect)
 	return connect
 }

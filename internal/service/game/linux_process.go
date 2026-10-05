@@ -7,6 +7,7 @@ import (
 	"dst-admin-go/internal/service/levelConfig"
 	"log"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +52,9 @@ func (p *LinuxProcess) launchLevel(clusterName, levelName string) error {
 		dstInstallDir = dstInstallDir + "-beta"
 	}
 	ugcDirectory := cluster.Ugc_directory
+	if ugcDirectory == "" && cluster.Mod_download_path != "" {
+		ugcDirectory = filepath.Join(cluster.Mod_download_path, "steamapps", "workshop")
+	}
 	persistent_storage_root := cluster.Persistent_storage_root
 	conf_dir := cluster.Conf_dir
 	var startCmd = ""

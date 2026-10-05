@@ -756,7 +756,10 @@ func (s *ModService) getModInfoConfig(clusterName, lang, modId string) map[strin
 	// 检查mod文件是否已经存在
 	config, _ := s.dstConfig.GetDstConfig(clusterName)
 	modDownloadPath := config.Mod_download_path
-	fileUtils.CreateDirIfNotExists(modDownloadPath)
+	if fi, err := os.Stat(modDownloadPath); err == nil && !fi.IsDir() {
+		_ = os.Remove(modDownloadPath)
+	}
+	_ = os.MkdirAll(modDownloadPath, 0755)
 
 	// 下载的模组位置
 	modPath := filepath.Join(modDownloadPath, "steamapps", "workshop", "content", "322330", modId)

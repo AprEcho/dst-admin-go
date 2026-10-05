@@ -5,6 +5,7 @@ import (
 	"dst-admin-go/internal/service/levelConfig"
 	"fmt"
 	"log"
+	"path/filepath"
 	"sync"
 )
 
@@ -31,8 +32,12 @@ func (p *WindowProcess) Start(clusterName, levelName string) error {
 	if err != nil {
 		return err
 	}
+	ugcDir := config.Ugc_directory
+	if ugcDir == "" && config.Mod_download_path != "" {
+		ugcDir = filepath.Join(config.Mod_download_path, "steamapps", "workshop")
+	}
 	go func() {
-		p.cli.StartLevel(clusterName, levelName, config.Bin, config.Steamcmd, config.Force_install_dir, config.Ugc_directory, config.Persistent_storage_root, config.Conf_dir)
+		p.cli.StartLevel(clusterName, levelName, config.Bin, config.Steamcmd, config.Force_install_dir, ugcDir, config.Persistent_storage_root, config.Conf_dir)
 	}()
 
 	return err

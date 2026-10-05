@@ -15,7 +15,7 @@ env:
   # The web UI lives in a companion repository. Defaults to the same owner as
   # this repository so forks automatically build their own frontend fork,
   # and upstream automatically builds the upstream frontend.
-  FRONTEND_REPO: ${{ vars.FRONTEND_REPO || format('{0}/dst-manage-web2', github.repository_owner) }}
+  FRONTEND_REPO: ${{ vars.FRONTEND_REPO || 'carrot-hu23/dst-manage-web2' }}
   FRONTEND_REF: ${{ vars.FRONTEND_REF || 'main' }}
 
 jobs:

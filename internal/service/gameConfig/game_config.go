@@ -361,12 +361,12 @@ func (p *GameConfig) SaveConfig(clusterName string, homeConfig HomeConfigVO) {
 	// 3. 保存世界地图配置
 	if homeConfig.MasterMapData != "" {
 		masterPath := filepath.Join(p.archive.ClusterPath(clusterName), "Master")
-		_ = fileUtils.CreateDirIfNotExists(masterPath)
+		fileUtils.CreateDirIfNotExists(masterPath)
 		_ = fileUtils.WriterTXT(filepath.Join(masterPath, "leveldataoverride.lua"), homeConfig.MasterMapData)
 	}
 	if homeConfig.CavesMapData != "" {
 		cavesPath := filepath.Join(p.archive.ClusterPath(clusterName), "Caves")
-		_ = fileUtils.CreateDirIfNotExists(cavesPath)
+		fileUtils.CreateDirIfNotExists(cavesPath)
 		_ = fileUtils.WriterTXT(filepath.Join(cavesPath, "leveldataoverride.lua"), homeConfig.CavesMapData)
 	}
 

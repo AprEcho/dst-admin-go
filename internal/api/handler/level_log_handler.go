@@ -151,6 +151,14 @@ func (h *LevelLogHandler) GetServerLog(ctx *gin.Context) {
 	}
 	read, err := fileUtils.ReverseRead(serverLogPath, uint(linesInt))
 	if err != nil {
+		if os.IsNotExist(err) {
+			ctx.JSON(200, response.Response{
+				Code: 200,
+				Data: []string{},
+				Msg:  "success",
+			})
+			return
+		}
 		ctx.JSON(200, response.Response{
 			Code: 500,
 			Msg:  "failed to read server log: " + err.Error(),
@@ -182,6 +190,10 @@ func (h *LevelLogHandler) DownloadServerLog(ctx *gin.Context) {
 		return
 	}
 	serverLogPath := h.archive.ServerLogPath(clusterName, levelName)
+	if !fileUtils.Exists(serverLogPath) {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "server log file not found"})
+		return
+	}
 	ctx.Header("Content-Type", "application/octet-stream")
 	ctx.Header("Content-Disposition", "attachment; filename="+"server_log.txt")
 	ctx.Header("Content-Transfer-Encoding", "binary")
@@ -223,6 +235,9 @@ func (r *FileLogReader) Snapshot(
 
 	f, err := os.Open(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{}, nil
+		}
 		return nil, err
 	}
 	defer f.Close()
@@ -285,39 +300,55 @@ func (r *FileLogReader) Follow(
 
 	path := serverLogPath
 
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	stat, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return nil, nil, err
-	}
-
 	out := make(chan string, 100)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	offset := stat.Size()
-
 	go func() {
 		defer close(out)
-		defer f.Close()
 
-		reader := bufio.NewReader(f)
+		var f *os.File
+		var offset int64
+		var reader *bufio.Reader
+
+		defer func() {
+			if f != nil {
+				f.Close()
+			}
+		}()
+
+		// 如果文件已存在，先打开并定位到末尾
+		if initialF, err := os.Open(path); err == nil {
+			if stat, err := initialF.Stat(); err == nil {
+				f = initialF
+				offset = stat.Size()
+				reader = bufio.NewReader(f)
+			} else {
+				initialF.Close()
+			}
+		}
 
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-time.After(r.interval):
+				if f == nil {
+					// 尝试打开文件（例如游戏刚刚启动生成了日志）
+					openedF, err := os.Open(path)
+					if err != nil {
+						continue
+					}
+					f = openedF
+					offset = 0
+					reader = bufio.NewReader(f)
+				}
+
 				stat, err := f.Stat()
 				if err != nil {
 					continue
 				}
 
-				// 文件被 truncate
+				// 文件被重新创建或清空 (truncate / rotate)
 				if stat.Size() < offset {
 					offset = 0
 					f.Seek(0, io.SeekStart)

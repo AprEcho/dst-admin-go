@@ -179,10 +179,7 @@ func (l *LevelService) UpdateLevels(clusterName string, levels []levelConfig.Lev
 
 // SyncClusterModsSetup 同步集群下所有世界实际启用的模组到 dedicated_server_mods_setup.lua
 func (l *LevelService) SyncClusterModsSetup(clusterName string) error {
-	levels, err := l.GetLevelList(clusterName)
-	if err != nil {
-		return err
-	}
+	levels := l.GetLevelList(clusterName)
 	config, err := l.dstConfig.GetDstConfig(clusterName)
 	if err != nil {
 		return err

@@ -13,6 +13,7 @@ type WindowProcess struct {
 	dstConfig        dstConfig.Config
 	cli              *ClusterContainer
 	levelConfigUtils *levelConfig.LevelConfigUtils
+	modPrechecker    ModPrechecker
 }
 
 func NewWindowProcess(dstConfig *dstConfig.Config, levelConfigUtils *levelConfig.LevelConfigUtils) *WindowProcess {
@@ -23,11 +24,21 @@ func NewWindowProcess(dstConfig *dstConfig.Config, levelConfigUtils *levelConfig
 	}
 }
 
+func (p *WindowProcess) SetModPrechecker(checker ModPrechecker) {
+	p.modPrechecker = checker
+}
+
 func (p *WindowProcess) SessionName(clusterName, levelName string) string {
 	return clusterName + "_" + levelName
 }
 
 func (p *WindowProcess) Start(clusterName, levelName string) error {
+	if p.modPrechecker != nil {
+		if err := p.modPrechecker.EnsureLevelModsDownloaded(clusterName, levelName); err != nil {
+			log.Printf("[WindowProcess] 启动前预检下载模组失败: %v", err)
+		}
+	}
+
 	config, err := p.dstConfig.GetDstConfig(clusterName)
 	if err != nil {
 		return err

@@ -7,6 +7,10 @@ type DstPsAux struct {
 	RSS     string `json:"RSS"`
 }
 
+type ModPrechecker interface {
+	EnsureLevelModsDownloaded(clusterName, levelName string) error
+}
+
 type Process interface {
 	SessionName(clusterName, levelName string) string
 
@@ -20,4 +24,6 @@ type Process interface {
 	Command(clusterName, levelName, command string) error
 
 	PsAuxSpecified(clusterName, levelName string) DstPsAux
+
+	SetModPrechecker(checker ModPrechecker)
 }

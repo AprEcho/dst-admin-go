@@ -17,6 +17,7 @@ type LinuxProcess struct {
 	dstConfig        dstConfig.Config
 	levelConfigUtils *levelConfig.LevelConfigUtils
 	mu               sync.Mutex // 保护启动/停止操作，防止并发执行
+	modPrechecker    ModPrechecker
 }
 
 func NewLinuxProcess(dstConfig dstConfig.Config, levelConfigUtils *levelConfig.LevelConfigUtils) *LinuxProcess {
@@ -24,6 +25,10 @@ func NewLinuxProcess(dstConfig dstConfig.Config, levelConfigUtils *levelConfig.L
 		dstConfig:        dstConfig,
 		levelConfigUtils: levelConfigUtils,
 	}
+}
+
+func (p *LinuxProcess) SetModPrechecker(checker ModPrechecker) {
+	p.modPrechecker = checker
 }
 
 func (p *LinuxProcess) SessionName(clusterName, levelName string) string {
@@ -42,6 +47,12 @@ func (p *LinuxProcess) Start(clusterName, levelName string) error {
 }
 
 func (p *LinuxProcess) launchLevel(clusterName, levelName string) error {
+	if p.modPrechecker != nil {
+		if err := p.modPrechecker.EnsureLevelModsDownloaded(clusterName, levelName); err != nil {
+			log.Printf("[LinuxProcess] 启动前预检下载模组失败: %v", err)
+		}
+	}
+
 	cluster, err := p.dstConfig.GetDstConfig(clusterName)
 	if err != nil {
 		return err

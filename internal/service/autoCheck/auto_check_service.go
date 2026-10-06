@@ -11,9 +11,12 @@ import (
 	"dst-admin-go/internal/service/update"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -245,6 +248,25 @@ func (s *AutoCheckService) sendAnnouncement(clusterName, levelName, announcement
 	}
 }
 
+func isModDirValid(modDir string) bool {
+	if !fileUtils.Exists(modDir) {
+		return false
+	}
+	if fileUtils.Exists(filepath.Join(modDir, "modinfo.lua")) || fileUtils.Exists(filepath.Join(modDir, "modmain.lua")) {
+		return true
+	}
+	entries, err := ioutil.ReadDir(modDir)
+	if err != nil || len(entries) == 0 {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() && (strings.HasSuffix(e.Name(), ".bin") || strings.HasSuffix(e.Name(), ".lua")) && e.Size() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *AutoCheckService) hasModUpdate(clusterName, levelName string) bool {
 	defer func() {
 		if r := recover(); r != nil {
@@ -266,20 +288,42 @@ func (s *AutoCheckService) hasModUpdate(clusterName, levelName string) bool {
 	}
 
 	acfPath := s.pathResolver.GetUgcAcfPath(clusterName, levelName)
-	if !fileUtils.Exists(acfPath) {
-		return false
-	}
 	acfWorkshops := parseACFFile(acfPath)
-	if len(acfWorkshops) == 0 {
-		return false
+	if acfWorkshops == nil {
+		acfWorkshops = make(map[string]WorkshopItem)
 	}
 
+	config, _ := s.dstConfig.GetDstConfig(clusterName)
 	activeModMap := make(map[string]WorkshopItem)
 	for _, id := range workshopIds {
-		if item, ok := acfWorkshops[id]; ok {
+		modPath := s.pathResolver.GetUgcWorkshopModPath(clusterName, levelName, id)
+		installed := isModDirValid(modPath)
+		if !installed && config.Mod_download_path != "" {
+			altPath := filepath.Join(config.Mod_download_path, "steamapps", "workshop", "content", "322330", id)
+			if isModDirValid(altPath) {
+				installed = true
+				modPath = altPath
+			}
+		}
+
+		// 物理磁盘检测：若开启的模组在本地磁盘不存在，直接判定需要更新/下载
+		if !installed {
+			log.Printf("[AutoCheck] 世界 [%s/%s] 模组 %s 本地物理文件缺失，判定需要下载/更新", clusterName, levelName, id)
+			return true
+		}
+
+		if item, ok := acfWorkshops[id]; ok && item.TimeUpdated > 0 {
 			activeModMap[id] = item
+		} else {
+			info, err := os.Stat(modPath)
+			timeUpdated := int64(0)
+			if err == nil {
+				timeUpdated = info.ModTime().Unix()
+			}
+			activeModMap[id] = WorkshopItem{TimeUpdated: timeUpdated}
 		}
 	}
+
 	if len(activeModMap) == 0 {
 		return false
 	}

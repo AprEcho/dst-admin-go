@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"dst-admin-go/internal/model"
+	"dst-admin-go/internal/pkg/utils/dstUtils"
 	"dst-admin-go/internal/pkg/utils/fileUtils"
 	"dst-admin-go/internal/pkg/utils/shellUtils"
 	"dst-admin-go/internal/service/archive"
@@ -502,50 +503,67 @@ func (s *ModService) DeleteMod(clusterName, modId string) error {
 // UpdateAllModInfos 批量更新所有模组信息
 func (s *ModService) UpdateAllModInfos(clusterName, lang string) error {
 	var modInfos []model.ModInfo
-	var needUpdateList []model.ModInfo
-	var workshopIds []string
-
 	s.db.Find(&modInfos)
 
+	config, _ := s.dstConfig.GetDstConfig(clusterName)
+	modDownloadPath := config.Mod_download_path
+
+	var workshopIds []string
 	for i := range modInfos {
 		workshopIds = append(workshopIds, modInfos[i].Modid)
 	}
 
-	publishedFileDetails, err := s.getPublishedFileDetailsBatched(workshopIds, 20)
-	if err != nil {
-		return err
-	}
-
-	for i := range publishedFileDetails {
-		publishedfiledetail := publishedFileDetails[i]
-		for j := range modInfos {
-			if modInfos[j].Modid == publishedfiledetail.Publishedfileid && modInfos[j].LastTime < publishedfiledetail.TimeUpdated {
-				needUpdateList = append(needUpdateList, modInfos[i])
-			}
+	// 1. 先检查本地现存的旧归档，确保全部解压
+	for _, id := range workshopIds {
+		modDir := filepath.Join(modDownloadPath, "steamapps", "workshop", "content", "322330", id)
+		if fileUtils.Exists(modDir) {
+			_ = s.ExtractLegacyBinIfPresent(modDir)
 		}
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(len(needUpdateList))
-
-	for i := range needUpdateList {
-		go func(i int) {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Println(r)
-				}
-				wg.Done()
-			}()
-			modId := needUpdateList[i].Modid
-			// 删除之前的数据
-			config, _ := s.dstConfig.GetDstConfig(clusterName)
-			modDownloadPath := config.Mod_download_path
-			modPath := filepath.Join(modDownloadPath, "/steamapps/workshop/content/322330/", modId)
-			_ = fileUtils.DeleteDir(modPath)
-			_, _ = s.SubscribeModByModId(clusterName, modId, lang)
-		}(i)
+	// 2. 批量请求 Steam Web API 获取远端更新时间
+	publishedFileDetails, err := s.getPublishedFileDetailsBatched(workshopIds, 20)
+	if err != nil {
+		log.Printf("[UpdateAllModInfos] 获取远程工坊详情失败: %v, 将仅检查本地缺失情况", err)
 	}
-	wg.Wait()
+
+	remoteTimeMap := make(map[string]float64)
+	for _, detail := range publishedFileDetails {
+		remoteTimeMap[detail.Publishedfileid] = detail.TimeUpdated
+	}
+
+	// 3. 筛选出待下载/更新的 Mod（本地缺失 OR 远端有新版本）
+	var needDownloadIds []string
+	for _, m := range modInfos {
+		isInstalled := s.IsModInstalledLocally(clusterName, m.Modid)
+		remoteTime := remoteTimeMap[m.Modid]
+
+		if !isInstalled || (remoteTime > 0 && m.LastTime < remoteTime) {
+			needDownloadIds = append(needDownloadIds, m.Modid)
+		}
+	}
+
+	// 4. 如果有需要下载或更新的，使用 SteamCMD 批量下载
+	if len(needDownloadIds) > 0 {
+		log.Printf("[UpdateAllModInfos] 待下载/更新模组列表: %v", needDownloadIds)
+		if err := s.DownloadWorkshopMods(clusterName, needDownloadIds); err != nil {
+			log.Printf("[UpdateAllModInfos] SteamCMD 下载部分或全部失败: %v", err)
+		}
+	}
+
+	// 5. 重新读取本地 modinfo 配置，更新数据库记录
+	for _, m := range modInfos {
+		modConfig := s.getModInfoConfig(clusterName, lang, m.Modid)
+		if len(modConfig) > 0 {
+			modConfigJson, _ := json.Marshal(modConfig)
+			m.ModConfig = string(modConfigJson)
+			if remoteTime, ok := remoteTimeMap[m.Modid]; ok && remoteTime > 0 {
+				m.LastTime = remoteTime
+			}
+			m.Update = false
+			s.db.Save(&m)
+		}
+	}
 
 	return nil
 }
@@ -608,67 +626,127 @@ func (s *ModService) AddModInfo(clusterName, lang, modid, modinfo, modDownloadPa
 	return s.addModInfoToDb(clusterName, lang, modid)
 }
 
-// GetUgcModInfo 获取UGC模组信息
+// GetUgcModInfo 获取UGC模组信息（以物理磁盘真实文件为准，ACF仅作为辅助时间戳参考）
 func (s *ModService) GetUgcModInfo(clusterName, levelName string) ([]WorkshopItemDetail, error) {
+	config, _ := s.dstConfig.GetDstConfig(clusterName)
+	var contentDir string
+	if config.Ugc_directory != "" {
+		contentDir = filepath.Join(s.pathResolver.GetUgcModPath(clusterName), "content", "322330")
+	} else {
+		lvl := levelName
+		if lvl == "" {
+			lvl = "Master"
+		}
+		contentDir = filepath.Join(config.Force_install_dir, "ugc_mods", clusterName, lvl, "content", "322330")
+	}
+
+	if !fileUtils.Exists(contentDir) {
+		return []WorkshopItemDetail{}, nil
+	}
+
+	// 读取ACF文件作为时间戳参考（若存在）
 	acfPath := s.pathResolver.GetUgcAcfPath(clusterName, levelName)
 	acfWorkshops := s.parseACFFile(acfPath)
+	if acfWorkshops == nil {
+		acfWorkshops = make(map[string]WorkshopItem)
+	}
+
+	entries, err := ioutil.ReadDir(contentDir)
+	if err != nil {
+		return []WorkshopItemDetail{}, nil
+	}
+
+	type localModInfo struct {
+		timeUpdated int64
+		modDir      string
+	}
+	localMods := make(map[string]localModInfo)
+	var modIds []string
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		modId := entry.Name()
+		if _, err := strconv.ParseUint(modId, 10, 64); err != nil {
+			continue
+		}
+
+		modDir := filepath.Join(contentDir, modId)
+		// 自动解压老旧归档
+		_ = s.ExtractLegacyBinIfPresent(modDir)
+
+		// 检查该目录是否包含有效的mod文件
+		if !s.hasModFiles(modDir) {
+			continue
+		}
+
+		timeUpdated := int64(0)
+		if acfItem, ok := acfWorkshops[modId]; ok && acfItem.TimeUpdated > 0 {
+			timeUpdated = acfItem.TimeUpdated
+		} else {
+			timeUpdated = entry.ModTime().Unix()
+		}
+
+		localMods[modId] = localModInfo{
+			timeUpdated: timeUpdated,
+			modDir:      modDir,
+		}
+		modIds = append(modIds, modId)
+	}
+
+	if len(modIds) == 0 {
+		return []WorkshopItemDetail{}, nil
+	}
 
 	var workshopItemDetails []WorkshopItemDetail
-	var modIds []string
-	for key := range acfWorkshops {
-		modIds = append(modIds, key)
-	}
 
-	urlStr := "http://api.steampowered.com/IPublishedFileService/GetDetails/v1/"
-	data := url.Values{}
-	data.Set("key", steamAPIKey)
-	data.Set("language", "6")
-	for i := range modIds {
-		data.Set("publishedfileids["+strconv.Itoa(i)+"]", modIds[i])
-	}
-	urlStr = urlStr + "?" + data.Encode()
-
-	req, err := http.NewRequest("GET", urlStr, nil)
+	// 请求 Steam Web API 获取远端最新信息
+	details, err := s.getPublishedFileDetailsBatched(modIds, 20)
 	if err != nil {
-		return nil, err
+		log.Printf("[GetUgcModInfo] 请求 Steam API 失败: %v, 将使用本地信息返回", err)
 	}
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var result map[string]interface{}
-	err = json.NewDecoder(resp.Body).Decode(&result)
-	if err != nil {
-		return nil, err
-	}
-
-	dataList, ok := result["response"].(map[string]interface{})["publishedfiledetails"].([]interface{})
-	if !ok {
-		return nil, errors.New("解析响应失败")
-	}
-
-	for i := range dataList {
-		workshop := dataList[i].(map[string]interface{})
-		_, find := workshop["time_updated"]
-		if find {
-			timeUpdated := workshop["time_updated"].(float64)
-			modId := workshop["publishedfileid"].(string)
-			value, ok := acfWorkshops[modId]
-			if ok {
-				img := workshop["preview_url"].(string)
+	processed := make(map[string]bool)
+	for _, d := range details {
+		if local, ok := localMods[d.Publishedfileid]; ok {
+			img := d.PreviewURL
+			if img != "" {
 				img = fmt.Sprintf("%s?imw=64&imh=64&ima=fit&impolicy=Letterbox&imcolor=%%23000000&letterbox=true", img)
-				workshopItemDetails = append(workshopItemDetails, WorkshopItemDetail{
-					WorkShopId:  modId,
-					Timeupdated: value.TimeUpdated,
-					Timelast:    timeUpdated,
-					Img:         img,
-					Name:        workshop["title"].(string),
-				})
 			}
+			name := d.Title
+			if name == "" {
+				name = d.Publishedfileid
+			}
+			workshopItemDetails = append(workshopItemDetails, WorkshopItemDetail{
+				WorkShopId:  d.Publishedfileid,
+				Timeupdated: local.timeUpdated,
+				Timelast:    d.TimeUpdated,
+				Img:         img,
+				Name:        name,
+			})
+			processed[d.Publishedfileid] = true
+		}
+	}
+
+	// 针对 Steam API 未返回或查询失败的本地模组，尝试从本地 modinfo.lua 读取名称
+	for modId, local := range localMods {
+		if !processed[modId] {
+			name := modId
+			modinfoPath := filepath.Join(local.modDir, "modinfo.lua")
+			if fileUtils.Exists(modinfoPath) {
+				info := s.readModInfo("zh", modId, modinfoPath)
+				if n, ok := info["name"].(string); ok && n != "" {
+					name = n
+				}
+			}
+			workshopItemDetails = append(workshopItemDetails, WorkshopItemDetail{
+				WorkShopId:  modId,
+				Timeupdated: local.timeUpdated,
+				Timelast:    float64(local.timeUpdated),
+				Img:         "",
+				Name:        name,
+			})
 		}
 	}
 
@@ -760,53 +838,20 @@ func (s *ModService) getModInfoConfig(clusterName, lang, modId string) map[strin
 		}
 	}
 
-	// 检查mod文件是否已经存在
+	// 检查mod文件是否已经存在本地
 	config, _ := s.dstConfig.GetDstConfig(clusterName)
 	modDownloadPath := config.Mod_download_path
-	if fi, err := os.Stat(modDownloadPath); err == nil && !fi.IsDir() {
-		_ = os.Remove(modDownloadPath)
-	}
-	_ = os.MkdirAll(modDownloadPath, 0755)
-
-	// 下载的模组位置
 	modPath := filepath.Join(modDownloadPath, "steamapps", "workshop", "content", "322330", modId)
-	if _, err := os.Stat(modPath); err == nil {
-		log.Println("Mod already downloaded to:", modPath)
-	} else {
-		// 调用 SteamCMD 命令下载 mod
-		steamcmd := config.Steamcmd
-		if runtime.GOOS == "windows" {
-			cmd := "cd /d " + steamcmd + " && Start steamcmd.exe +login anonymous +force_install_dir " + modDownloadPath + " +workshop_download_item 322330 " + modId + " +quit"
-			log.Println("正在下载模组 command:", cmd)
-			_, err := shellUtils.ExecuteCommandInWin(cmd)
-			if err != nil {
-				log.Println("下载mod失败，请检查steamcmd路径是否配置正确", err)
-				return make(map[string]interface{})
-			}
-		} else {
-			var cmd *exec.Cmd
-			if fileUtils.Exists(filepath.Join(steamcmd, "steamcmd")) {
-				cmd = exec.Command(filepath.Join(steamcmd, "steamcmd"), "+login anonymous", "+force_install_dir", modDownloadPath, "+workshop_download_item 322330 "+modId, "+quit")
-			} else {
-				cmd = exec.Command(filepath.Join(steamcmd, "steamcmd.sh"), "+login anonymous", "+force_install_dir", modDownloadPath, "+workshop_download_item 322330 "+modId, "+quit")
-			}
 
-			log.Println("正在下载模组 command:", cmd)
-			output, err := cmd.CombinedOutput()
-			if err != nil {
-				log.Println("下载mod失败，请检查steamcmd路径是否配置正确", err)
-				return make(map[string]interface{})
-			}
-
-			// 解析 SteamCMD 输出
-			re := regexp.MustCompile(`Downloaded item \d+ to "([^"]+)"`)
-			match := re.FindStringSubmatch(string(output))
-			if len(match) < 2 {
-				log.Println("Error parsing output:", string(output))
-				return make(map[string]interface{})
-			}
-			log.Println("Mod downloaded to:", match[1])
+	if !s.IsModInstalledLocally(clusterName, modId) {
+		log.Println("[ModService] 本地未找到该模组，调用 SteamCMD 进行下载:", modId)
+		err := s.DownloadWorkshopMods(clusterName, []string{modId})
+		if err != nil {
+			log.Println("[ModService] 下载 mod 失败:", modId, err)
+			return make(map[string]interface{})
 		}
+	} else {
+		_ = s.ExtractLegacyBinIfPresent(modPath)
 	}
 
 	// 查找 modinfo.lua 文件
@@ -902,9 +947,11 @@ func (s *ModService) getDstUcgsModsInstalledPath(clusterName, modid string) (str
 	}
 
 	if fileUtils.Exists(masterModFilePath) {
+		_ = s.ExtractLegacyBinIfPresent(masterModFilePath)
 		return masterModFilePath, true
 	}
 	if fileUtils.Exists(caveModFilePath) {
+		_ = s.ExtractLegacyBinIfPresent(caveModFilePath)
 		return caveModFilePath, true
 	}
 	return "", false
@@ -1193,7 +1240,7 @@ func (s *ModService) getPublishedFileDetailsWithGet(workshopIds []string) ([]Pub
 		return nil, err
 	}
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: 10 * time.Second}
 	res, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -1291,20 +1338,192 @@ func (s *ModService) unzipToDir(zipReader *zip.Reader, destDir string) error {
 		if err != nil {
 			return err
 		}
-		defer outFile.Close()
 
 		rc, err := file.Open()
 		if err != nil {
+			outFile.Close()
 			return err
 		}
-		defer rc.Close()
 
 		_, err = io.Copy(outFile, rc)
+		rc.Close()
+		outFile.Close()
 		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// ExtractLegacyBinIfPresent 检查并自动解压老旧工坊归档 (*_legacy.bin 或 *.bin)
+func (s *ModService) ExtractLegacyBinIfPresent(modDir string) error {
+	modinfoPath := filepath.Join(modDir, "modinfo.lua")
+	if fileUtils.Exists(modinfoPath) {
+		return nil
+	}
+
+	entries, err := ioutil.ReadDir(modDir)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Size() == 0 {
+			continue
+		}
+		if strings.HasSuffix(entry.Name(), ".bin") {
+			binPath := filepath.Join(modDir, entry.Name())
+			zipReader, err := zip.OpenReader(binPath)
+			if err != nil {
+				log.Printf("[ModService] 尝试解压 %s 失败 (可能非zip格式): %v", binPath, err)
+				continue
+			}
+			log.Printf("[ModService] 检测到工坊老旧归档 %s，正在自动解压到 %s...", entry.Name(), modDir)
+			unzipErr := s.unzipToDir(&zipReader.Reader, modDir)
+			_ = zipReader.Close()
+			if unzipErr != nil {
+				log.Printf("[ModService] 解压归档 %s 失败: %v", binPath, unzipErr)
+				return unzipErr
+			}
+			log.Printf("[ModService] 工坊老旧归档 %s 解压成功", entry.Name())
+			return nil
+		}
+	}
+	return nil
+}
+
+// hasModFiles 检查模组目录是否包含有效的模组文件
+func (s *ModService) hasModFiles(modDir string) bool {
+	if fileUtils.Exists(filepath.Join(modDir, "modinfo.lua")) || fileUtils.Exists(filepath.Join(modDir, "modmain.lua")) {
+		return true
+	}
+	entries, err := ioutil.ReadDir(modDir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() && (strings.HasSuffix(e.Name(), ".bin") || strings.HasSuffix(e.Name(), ".lua")) && e.Size() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// IsModInstalledLocally 检查模组是否已真实安装在本地磁盘
+func (s *ModService) IsModInstalledLocally(clusterName, modId string) bool {
+	// 1. 检查饥荒 UGC 模组目录
+	if ugcPath, ok := s.getDstUcgsModsInstalledPath(clusterName, modId); ok {
+		if fileUtils.Exists(filepath.Join(ugcPath, "modinfo.lua")) {
+			return true
+		}
+		_ = s.ExtractLegacyBinIfPresent(ugcPath)
+		if fileUtils.Exists(filepath.Join(ugcPath, "modinfo.lua")) || s.hasModFiles(ugcPath) {
+			return true
+		}
+	}
+
+	// 2. 检查 SteamCMD 下载目录
+	config, _ := s.dstConfig.GetDstConfig(clusterName)
+	modDownloadPath := config.Mod_download_path
+	if modDownloadPath != "" {
+		modDir := filepath.Join(modDownloadPath, "steamapps", "workshop", "content", "322330", modId)
+		if fileUtils.Exists(modDir) {
+			if fileUtils.Exists(filepath.Join(modDir, "modinfo.lua")) {
+				return true
+			}
+			_ = s.ExtractLegacyBinIfPresent(modDir)
+			if fileUtils.Exists(filepath.Join(modDir, "modinfo.lua")) || s.hasModFiles(modDir) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// DownloadWorkshopMods 使用 SteamCMD 批量下载指定的创意工坊模组
+func (s *ModService) DownloadWorkshopMods(clusterName string, modIds []string) error {
+	if len(modIds) == 0 {
+		return nil
+	}
+	config, err := s.dstConfig.GetDstConfig(clusterName)
+	if err != nil {
+		return err
+	}
+	steamcmd := config.Steamcmd
+	modDownloadPath := config.Mod_download_path
+
+	_ = os.MkdirAll(modDownloadPath, 0755)
+
+	var downloadArgs []string
+	for _, id := range modIds {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			downloadArgs = append(downloadArgs, "+workshop_download_item 322330 "+id+" validate")
+		}
+	}
+	if len(downloadArgs) == 0 {
+		return nil
+	}
+
+	itemsCmd := strings.Join(downloadArgs, " ")
+
+	var cmdErr error
+	if runtime.GOOS == "windows" {
+		cmdStr := fmt.Sprintf("cd /d %s && Start /wait steamcmd.exe +force_install_dir %s +login anonymous %s +quit",
+			steamcmd, modDownloadPath, itemsCmd)
+		log.Println("[ModService] 正在使用 SteamCMD 批量下载模组:", cmdStr)
+		_, cmdErr = shellUtils.ExecuteCommandInWin(cmdStr)
+	} else {
+		steamCmdScript := filepath.Join(steamcmd, "steamcmd.sh")
+		if !fileUtils.Exists(steamCmdScript) {
+			steamCmdScript = filepath.Join(steamcmd, "steamcmd")
+		}
+		cmdStr := fmt.Sprintf("%s +force_install_dir %s +login anonymous %s +quit",
+			steamCmdScript, modDownloadPath, itemsCmd)
+		log.Println("[ModService] 正在使用 SteamCMD 批量下载模组:", cmdStr)
+		_, cmdErr = shellUtils.ExecuteCommand(cmdStr)
+	}
+
+	// 下载完成后，对所有下载的模组目录检测并自动解压老旧归档
+	for _, id := range modIds {
+		modDir := filepath.Join(modDownloadPath, "steamapps", "workshop", "content", "322330", id)
+		if fileUtils.Exists(modDir) {
+			_ = s.ExtractLegacyBinIfPresent(modDir)
+		}
+	}
+
+	return cmdErr
+}
+
+// EnsureLevelModsDownloaded 确保指定世界中启用的所有模组在本地已下载
+func (s *ModService) EnsureLevelModsDownloaded(clusterName, levelName string) error {
+	modoverridesPath := s.pathResolver.ModoverridesPath(clusterName, levelName)
+	if !fileUtils.Exists(modoverridesPath) {
+		return nil
+	}
+	content, err := fileUtils.ReadFile(modoverridesPath)
+	if err != nil {
+		return nil
+	}
+	workshopIds := dstUtils.WorkshopIds(content)
+	if len(workshopIds) == 0 {
+		return nil
+	}
+
+	var missingIds []string
+	for _, id := range workshopIds {
+		if !s.IsModInstalledLocally(clusterName, id) {
+			missingIds = append(missingIds, id)
+		}
+	}
+
+	if len(missingIds) == 0 {
+		return nil
+	}
+
+	log.Printf("[ModService] 检测到世界 [%s/%s] 存在本地缺失模组: %v，正在使用 SteamCMD 自动补齐下载...", clusterName, levelName, missingIds)
+	return s.DownloadWorkshopMods(clusterName, missingIds)
 }
 
 // ===== 辅助函数 =====

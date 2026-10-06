@@ -129,6 +129,7 @@ func Register(cfg *config.Config, db *gorm.DB, router *gin.RouterGroup) {
 	playerService := player.NewPlayerService(resolverService)
 	gameArchiveService := gameArchive.NewGameArchive(gameConfigService, levelService, resolverService)
 	modService := mod.NewModService(db, dstConfigService, resolverService)
+	gameProcess.SetModPrechecker(modService)
 	scheduleService := schedule.NewScheduleService(db, gameProcess, backupService, updateService, dstConfigService)
 	autoCheckService := autoCheck.NewAutoCheckService(db, resolverService, levelConfigUtils, gameProcess, updateService, dstConfigService)
 

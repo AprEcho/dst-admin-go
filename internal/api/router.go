@@ -6,6 +6,7 @@ import (
 	"dst-admin-go/internal/config"
 	"dst-admin-go/internal/middleware"
 	"dst-admin-go/internal/service/archive"
+	"dst-admin-go/internal/service/autoCheck"
 	"dst-admin-go/internal/service/backup"
 	"dst-admin-go/internal/service/dstConfig"
 	"dst-admin-go/internal/service/dstMap"
@@ -129,6 +130,7 @@ func Register(cfg *config.Config, db *gorm.DB, router *gin.RouterGroup) {
 	gameArchiveService := gameArchive.NewGameArchive(gameConfigService, levelService, resolverService)
 	modService := mod.NewModService(db, dstConfigService, resolverService)
 	scheduleService := schedule.NewScheduleService(db, gameProcess, backupService, updateService, dstConfigService)
+	autoCheckService := autoCheck.NewAutoCheckService(db, resolverService, levelConfigUtils, gameProcess, updateService, dstConfigService)
 
 	dstMapGenerator := dstMap.NewDSTMapGenerator()
 
@@ -152,6 +154,7 @@ func Register(cfg *config.Config, db *gorm.DB, router *gin.RouterGroup) {
 	statisticsHandler := handler.NewStatisticsHandler()
 	modHandler := handler.NewModHandler(modService, dstConfigService)
 	scheduleHandler := handler.NewScheduleHandler(scheduleService)
+	autoCheckHandler := handler.NewAutoCheckHandler(autoCheckService, levelConfigUtils, db)
 	preinstallHandler := handler.NewPreinstallHandler(gameProcess, backupService, resolverService, dstConfigService, levelConfigUtils, levelService)
 
 	// 中间件
@@ -182,6 +185,7 @@ func Register(cfg *config.Config, db *gorm.DB, router *gin.RouterGroup) {
 	statisticsHandler.RegisterRoute(router)
 	modHandler.RegisterRoute(router)
 	scheduleHandler.RegisterRoute(router)
+	autoCheckHandler.RegisterRoute(router)
 	preinstallHandler.RegisterRoute(router)
 
 }

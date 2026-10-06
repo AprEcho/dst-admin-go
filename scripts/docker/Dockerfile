@@ -67,6 +67,7 @@ RUN if [ "$BAKE_GAME_SERVER" = "true" ]; then \
 # entirely. docker-entrypoint.sh copies it into /app/data/dst_config only if
 # that file doesn't already exist there.
 COPY docker_dst_config /app/dst_config
+COPY docker_dst_config /app/docker_dst_config
 COPY docker_dst_config /app/docker_dst_config.default
 COPY dist /app/dist
 COPY static /app/static

@@ -20,13 +20,9 @@ type OneDstConfig struct {
 }
 
 func NewOneDstConfig(db *gorm.DB) OneDstConfig {
-	path := filepath.Join(config.Cfg.DataDir, DstConfigPath)
-	if !fileUtils.Exists(path) && fileUtils.Exists(DstConfigPath) {
-		path = DstConfigPath
-	}
 	return OneDstConfig{
 		db:            db,
-		dstConfigPath: path,
+		dstConfigPath: filepath.Join(config.Cfg.DataDir, DstConfigPath),
 	}
 }
 
@@ -161,17 +157,11 @@ func (o *OneDstConfig) GetDstConfig(clusterName string) (DstConfig, error) {
 	if dstConfig.Cluster == "" {
 		dstConfig.Cluster = "MyDediServer"
 	}
-	defaultBackup := filepath.Join(config.Cfg.DataDir, "backup")
-	defaultMods := filepath.Join(config.Cfg.DataDir, "mods")
-
-	changed := false
-	if dstConfig.Backup == "" || dstConfig.Backup == "/app/backup" {
-		dstConfig.Backup = defaultBackup
-		changed = true
+	if dstConfig.Backup == "" {
+		dstConfig.Backup = filepath.Join(config.Cfg.DataDir, "backup")
 	}
-	if dstConfig.Mod_download_path == "" || dstConfig.Mod_download_path == "/app/mod" || dstConfig.Mod_download_path == "/app/data/mod" {
-		dstConfig.Mod_download_path = defaultMods
-		changed = true
+	if dstConfig.Mod_download_path == "" {
+		dstConfig.Mod_download_path = filepath.Join(config.Cfg.DataDir, "mods")
 	}
 	if dstConfig.Steamcmd == "" {
 		dstConfig.Steamcmd = "/app/steamcmd"
@@ -179,21 +169,13 @@ func (o *OneDstConfig) GetDstConfig(clusterName string) (DstConfig, error) {
 	if dstConfig.Force_install_dir == "" {
 		dstConfig.Force_install_dir = "/app/dst-dedicated-server"
 	}
-	if dstConfig.Ugc_directory == "" ||
-		dstConfig.Ugc_directory == "/app/mod/steamapps/workshop" ||
-		dstConfig.Ugc_directory == "/app/data/mod/steamapps/workshop" ||
-		strings.HasPrefix(dstConfig.Ugc_directory, "/app/mod/") {
-		dstConfig.Ugc_directory = filepath.Join(dstConfig.Mod_download_path, "steamapps", "workshop")
-		changed = true
-	}
+	// ugc_directory 始终根据 mod_download_path 动态推导
+	dstConfig.Ugc_directory = filepath.Join(dstConfig.Mod_download_path, "steamapps", "workshop")
+
 	if dstConfig.Bin == 0 {
 		dstConfig.Bin = 32
 	}
 	dstConfig.ContainerMode = false
-
-	if changed && fileUtils.Exists(o.dstConfigPath) {
-		_ = o.writeConfigFile(dstConfig)
-	}
 
 	return dstConfig, nil
 }
@@ -240,12 +222,11 @@ func (o *OneDstConfig) SaveDstConfig(clusterName string, dstConfig DstConfig) er
 	if dstConfig.Conf_dir == "" {
 		dstConfig.Conf_dir = oldDstConfig.Conf_dir
 	}
-	if dstConfig.Ugc_directory == "" {
-		dstConfig.Ugc_directory = oldDstConfig.Ugc_directory
-	}
 	if dstConfig.DoNotStarveServerDirectory == "" {
 		dstConfig.DoNotStarveServerDirectory = oldDstConfig.DoNotStarveServerDirectory
 	}
+	// ugc_directory 始终根据 mod_download_path 动态推导
+	dstConfig.Ugc_directory = filepath.Join(dstConfig.Mod_download_path, "steamapps", "workshop")
 
 	return o.writeConfigFile(dstConfig)
 }

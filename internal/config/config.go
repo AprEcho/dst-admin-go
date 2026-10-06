@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"io/ioutil"
-	"os"
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
@@ -67,12 +66,5 @@ func Load() *Config {
 
 // GetDbPath 获取数据库文件的完整路径
 func (c *Config) GetDbPath() string {
-	target := filepath.Join(c.DataDir, c.Db)
-	if _, err := os.Stat(target); os.IsNotExist(err) {
-		oldPath := filepath.Join(".", c.Db)
-		if _, err2 := os.Stat(oldPath); err2 == nil {
-			return oldPath
-		}
-	}
-	return target
+	return filepath.Join(c.DataDir, c.Db)
 }

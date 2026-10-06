@@ -1,0 +1,19 @@
+services:
+  dst-admin-go:
+    image: ghcr.io/aprecho/dst-admin-go:latest
+    container_name: dst-admin-go
+    restart: always
+    network_mode: host
+    # 如需使用桥接网络映射端口，请注释 network_mode 并取消以下端口注释：
+    # ports:
+    #   - "8082:8082/tcp"
+    #   - "10888:10888/udp"
+    #   - "10998:10998/udp"
+    #   - "10999:10999/udp"
+    volumes:
+      - /usr/share/zoneinfo/Asia/Shanghai:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ./steamcmd:/app/steamcmd
+      - ./DoNotStarveTogether:/root/.klei/DoNotStarveTogether
+      - ./dst-dedicated-server:/app/dst-dedicated-server
+      - ./data:/app/data

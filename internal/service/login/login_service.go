@@ -21,14 +21,7 @@ type LoginService struct {
 
 // passwordPath 账户信息文件的完整路径
 func (l *LoginService) passwordPath() string {
-	p := filepath.Join(l.config.DataDir, "password.txt")
-	if fileUtils.Exists(p) {
-		return p
-	}
-	if fileUtils.Exists("./password.txt") {
-		return "./password.txt"
-	}
-	return p
+	return filepath.Join(l.config.DataDir, "password.txt")
 }
 
 type UserInfo struct {

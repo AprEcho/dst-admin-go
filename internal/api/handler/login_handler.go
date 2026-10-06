@@ -16,26 +16,7 @@ import (
 
 // passwordPath 账户信息文件的完整路径
 func passwordPath() string {
-	p := filepath.Join(config.Cfg.DataDir, "password.txt")
-	if fileUtils.Exists(p) {
-		return p
-	}
-	if fileUtils.Exists("./password.txt") {
-		return "./password.txt"
-	}
-	return p
-}
-
-// firstInitMarkerPath 首次初始化标记文件的完整路径
-func firstInitMarkerPath() string {
-	p := filepath.Join(config.Cfg.DataDir, "first")
-	if fileUtils.Exists(p) {
-		return p
-	}
-	if fileUtils.Exists("./first") {
-		return "./first"
-	}
-	return p
+	return filepath.Join(config.Cfg.DataDir, "password.txt")
 }
 
 type LoginHandler struct {
@@ -202,7 +183,7 @@ func (h *LoginHandler) InitFirst(ctx *gin.Context) {
 	db := database.Db
 	kv := model.KV{}
 	db.Where("key = 'FIRST_INIT'").First(&kv)
-	if kv.Value == "TRUE" || fileUtils.Exists(passwordPath()) || fileUtils.Exists(firstInitMarkerPath()) {
+	if kv.Value == "TRUE" || fileUtils.Exists(passwordPath()) {
 		ctx.JSON(http.StatusBadRequest, response.Response{
 			Code: 400,
 			Msg:  "系统已初始化，不可重复初始化",
@@ -258,13 +239,8 @@ func (h *LoginHandler) CheckIsFirst(ctx *gin.Context) {
 	db := database.Db
 	kv := model.KV{}
 	db.Where("key = 'FIRST_INIT'").First(&kv)
-	if kv.Value == "TRUE" {
+	if kv.Value == "TRUE" || fileUtils.Exists(passwordPath()) {
 		exist = true
-	} else if fileUtils.Exists(passwordPath()) {
-		// 只要 password.txt 存在（已有账号密码），直接视为已初始化，绝不弹引导
-		exist = true
-	} else {
-		exist = fileUtils.Exists(firstInitMarkerPath())
 	}
 
 	code := 200

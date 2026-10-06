@@ -31,25 +31,24 @@ bash docker_build.sh 1.6.1
 
 ```bash
 # 创建数据目录
-mkdir -p ~/dstsave/{back,steamcmd,dst-dedicated-server}
+mkdir -p ~/dstsave/{data,steamcmd,dst-dedicated-server}
 
 # 运行容器
 docker run -d \
   --name dst-admin \
-  -p 8082:8082 \
-  -p 10888:10888/udp \
-  -p 10998:10998/udp \
-  -p 10999:10999/udp \
+  --net=host \
   -v ~/dstsave:/root/.klei/DoNotStarveTogether \
-  -v ~/dstsave/back:/app/backup \
   -v ~/dstsave/steamcmd:/app/steamcmd \
   -v ~/dstsave/dst-dedicated-server:/app/dst-dedicated-server \
-  hujinbo23/dst-admin-go:latest
+  -v ~/dstsave/data:/app/data \
+  ghcr.io/aprecho/dst-admin-go:latest
 ```
 
 ### 3. 访问管理面板
 
 打开浏览器访问: http://localhost:8082
+- 默认账号: `admin`
+- 默认密码: `123456`
 
 ## 端口说明
 
@@ -67,20 +66,16 @@ docker run -d \
 | 容器内路径 | 用途 | 是否推荐挂载 |
 |-----------|------|-------------|
 | `/root/.klei/DoNotStarveTogether` | 游戏存档目录 | ✅ 推荐 |
-| `/app/backup` | 存档备份目录 | ✅ 推荐 |
-| `/app/mod` | MOD 缓存目录 | 可选 |
 | `/app/steamcmd` | SteamCMD 安装目录 | ✅ 推荐 |
 | `/app/dst-dedicated-server` | 饥荒服务器文件 | ✅ 推荐 |
-| `/app/dst-db` | SQLite 数据库文件 | ✅ 推荐 |
-| `/app/password.txt` | 初始密码文件 | ✅ 推荐 |
-| `/app/first` | 首次登录标记文件 | ✅ 推荐 |
-| `/app/dst-admin-go.log` | 应用日志文件 | 可选 |
-| `/app/config.yml` | 配置文件 | 可选 |
+| `/app/data` | 面板持久化数据主目录（包含数据库、配置、备份、模组及密码） | ✅ 推荐 |
 
-**特别说明**：
-- `first` 文件：如果存在，启动时会跳过初始化界面，使用 `password.txt` 中的账号登录
-- `dst-db` 文件：SQLite 数据库，包含所有配置和运行数据
-- `password.txt` 文件：初始管理员账号信息，格式见 Docker Compose 示例
+**关于 `/app/data` 目录说明**：
+- `data/dst-db`：SQLite 数据库
+- `data/dst_config`：面板运行配置
+- `data/password.txt`：管理员账号信息（若忘记密码可随时离线修改）
+- `data/backup`：游戏备份目录
+- `data/mods`：创意工坊模组下载及缓存目录 (UGC: mods/steamapps/workshop)
 
 ## 镜像特性
 

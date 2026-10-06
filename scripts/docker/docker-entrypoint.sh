@@ -14,30 +14,19 @@ mkdir -p "$data_dir"
 mkdir -p "$data_dir/backup"
 mkdir -p "$data_dir/mods"
 
-# 如果历史遗留宿主机存在 data/mod 且无 data/mods，自动建立软链接兼容
-if [ -d "$data_dir/mod" ] && [ ! -e "$data_dir/mods" ]; then
-  ln -s "$data_dir/mod" "$data_dir/mods"
-fi
-
-# 容器根目录兼容软链接
-[ ! -e /app/backup ] && ln -s "$data_dir/backup" /app/backup
-[ ! -e /app/mods ] && ln -s "$data_dir/mods" /app/mods
-[ ! -e /app/mod ] && ln -s "$data_dir/mods" /app/mod
-
-# 默认配置文件 dst_config
+# 初始化配置文件 dst_config
 if [ ! -f "$data_dir/dst_config" ]; then
-  if [ -f /app/dst_config ]; then
-    cp /app/dst_config "$data_dir/dst_config"
+  if [ -f /app/docker_dst_config ]; then
+    cp /app/docker_dst_config "$data_dir/dst_config"
   elif [ -f /app/docker_dst_config.default ]; then
     cp /app/docker_dst_config.default "$data_dir/dst_config"
-  elif [ -f /app/docker_dst_config ]; then
-    cp /app/docker_dst_config "$data_dir/dst_config"
+  elif [ -f /app/dst_config ]; then
+    cp /app/dst_config "$data_dir/dst_config"
   fi
 fi
-[ ! -e /app/dst_config ] && [ -f "$data_dir/dst_config" ] && ln -s "$data_dir/dst_config" /app/dst_config
 
-# 初始管理员账户文件（若不存在则自动生成默认凭据，开箱即用，无需任何 first 标记）
-if [ ! -f "$data_dir/password.txt" ] && [ ! -f /app/password.txt ]; then
+# 初始管理员账户文件（若不存在则自动生成默认凭据，开箱即用，默认账号密码 admin/123456）
+if [ ! -f "$data_dir/password.txt" ]; then
   cat <<EOF > "$data_dir/password.txt"
 username=admin
 password=123456
@@ -45,7 +34,6 @@ displayName=admin
 photoURL=xxx
 EOF
 fi
-[ ! -e /app/password.txt ] && [ -f "$data_dir/password.txt" ] && ln -s "$data_dir/password.txt" /app/password.txt
 
 # 进入 steam_cmd_path 目录
 cd "$steam_cmd_path"

@@ -59,6 +59,7 @@ COPY scripts/docker/docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod 755 /app/docker-entrypoint.sh
 COPY config.yml /app/config.yml
 COPY scripts/docker/docker_dst_config /app/dst_config
+COPY scripts/docker/docker_dst_config /app/docker_dst_config
 COPY scripts/docker/docker_dst_config /app/docker_dst_config.default
 
 # 拷贝前端产物与静态资源

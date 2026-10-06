@@ -7,6 +7,7 @@ import (
 	"dst-admin-go/internal/service/dstConfig"
 	"dst-admin-go/internal/service/mod"
 	"encoding/json"
+	"fmt"
 	"log"
 	"strconv"
 
@@ -165,13 +166,17 @@ func (h *ModHandler) UpdateAllModInfos(ctx *gin.Context) {
 	clusterName := context.GetClusterName(ctx)
 	lang := ctx.DefaultQuery("lang", "zh")
 
-	err := h.modService.UpdateAllModInfos(clusterName, lang)
+	updatedIds, err := h.modService.UpdateAllModInfos(clusterName, lang)
 	if err != nil {
 		response.FailWithMessage("更新失败: "+err.Error(), ctx)
 		return
 	}
 
-	response.OkWithMessage("更新成功", ctx)
+	if len(updatedIds) == 0 {
+		response.OkWithDetailed(updatedIds, "所有模组已是最新版本，无需更新", ctx)
+		return
+	}
+	response.OkWithDetailed(updatedIds, fmt.Sprintf("成功下载/更新 %d 个模组: %v", len(updatedIds), updatedIds), ctx)
 }
 
 // DeleteMod 删除模组

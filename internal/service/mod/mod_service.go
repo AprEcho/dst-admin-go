@@ -500,7 +500,7 @@ func (s *ModService) DeleteMod(clusterName, modId string) error {
 }
 
 // UpdateAllModInfos 批量更新所有模组信息
-func (s *ModService) UpdateAllModInfos(clusterName, lang string) error {
+func (s *ModService) UpdateAllModInfos(clusterName, lang string) ([]string, error) {
 	var modInfos []model.ModInfo
 	s.db.Find(&modInfos)
 
@@ -564,7 +564,7 @@ func (s *ModService) UpdateAllModInfos(clusterName, lang string) error {
 		}
 	}
 
-	return nil
+	return needDownloadIds, nil
 }
 
 // DeleteSetupWorkshop 删除所有workshop模组

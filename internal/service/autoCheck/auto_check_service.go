@@ -282,7 +282,7 @@ func (s *AutoCheckService) hasModUpdate(clusterName, levelName string) bool {
 	if err != nil {
 		return false
 	}
-	workshopIds := dstUtils.WorkshopIds(content)
+	workshopIds := dstUtils.EnabledWorkshopIds(content)
 	if len(workshopIds) == 0 {
 		return false
 	}

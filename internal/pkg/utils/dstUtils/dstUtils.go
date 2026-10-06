@@ -40,6 +40,25 @@ func WorkshopIds(content string) []string {
 	return workshopIds
 }
 
+// EnabledWorkshopIds 获取仅处于启用状态（enabled != false）的 workshop ID 列表
+func EnabledWorkshopIds(content string) []string {
+	var enabledIds []string
+	re := regexp.MustCompile(`\["workshop-(\w[-\w+]*)"\]\s*=\s*\{([^}]+)\}`)
+	matches := re.FindAllStringSubmatch(content, -1)
+	if len(matches) > 0 {
+		for _, m := range matches {
+			id := m[1]
+			body := m[2]
+			if regexp.MustCompile(`enabled\s*=\s*false`).MatchString(body) {
+				continue
+			}
+			enabledIds = append(enabledIds, id)
+		}
+		return enabledIds
+	}
+	return WorkshopIds(content)
+}
+
 func DedicatedServerModsSetup(dstConfig dstConfig.DstConfig, modConfig string) error {
 	if modConfig != "" {
 		var serverModSetup []string

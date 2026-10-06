@@ -1505,7 +1505,7 @@ func (s *ModService) EnsureLevelModsDownloaded(clusterName, levelName string) er
 	if err != nil {
 		return nil
 	}
-	workshopIds := dstUtils.WorkshopIds(content)
+	workshopIds := dstUtils.EnabledWorkshopIds(content)
 	if len(workshopIds) == 0 {
 		return nil
 	}

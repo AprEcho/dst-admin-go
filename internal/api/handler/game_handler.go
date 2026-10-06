@@ -4,6 +4,7 @@ import (
 	"dst-admin-go/internal/middleware"
 	"dst-admin-go/internal/pkg/context"
 	"dst-admin-go/internal/pkg/response"
+	"dst-admin-go/internal/pkg/utils/fileUtils"
 	"dst-admin-go/internal/pkg/utils/shellUtils"
 	"dst-admin-go/internal/pkg/utils/systemUtils"
 	"dst-admin-go/internal/service/archive"
@@ -14,6 +15,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -49,6 +51,12 @@ func (p *GameHandler) RegisterRoute(router *gin.RouterGroup) {
 	router.GET("/api/game/8level/status", p.Status)
 	router.GET("/api/game/archive", p.GameArchive)
 	router.GET("/api/game/system/info/stream", p.SystemInfoStream)
+	router.GET("/api/game/clean/level", p.CleanLevel)
+	router.DELETE("/api/game/clean/level", p.CleanLevel)
+	router.GET("/api/game/clean/level/all", p.CleanAllLevel)
+	router.DELETE("/api/game/clean/level/all", p.CleanAllLevel)
+	router.GET("/api/game/clean", p.CleanAllLevel)
+	router.DELETE("/api/game/clean", p.CleanAllLevel)
 }
 
 // Stop 停止世界 swagger 注释
@@ -428,3 +436,83 @@ func (p *GameHandler) GetSystemInfo(clusterName string) *SystemInfo {
 	wg.Wait()
 	return &dashboardVO
 }
+
+// CleanLevel 清理指定世界存档
+// @Summary 清理指定世界存档
+// @Description 清理指定世界存档（save, backup, 日志）
+// @Tags game
+// @Accept json
+// @Produce json
+// @Param level query []string false "世界名称列表"
+// @Success 200 {object} response.Response
+// @Router /api/game/clean/level [get]
+func (p *GameHandler) CleanLevel(ctx *gin.Context) {
+	clusterName := context.GetClusterName(ctx)
+	basePath := p.archive.ClusterPath(clusterName)
+
+	levels := ctx.QueryArray("level")
+	if len(levels) == 0 && ctx.Query("level") != "" {
+		levels = []string{ctx.Query("level")}
+	}
+
+	if len(levels) == 0 {
+		response.FailWithMessage("level query parameter is required", ctx)
+		return
+	}
+
+	for _, levelName := range levels {
+		levelName = strings.TrimSpace(levelName)
+		if levelName == "" || levelName == "." || levelName == ".." || strings.Contains(levelName, "/") || strings.Contains(levelName, "\\") {
+			continue
+		}
+		// 如果正在运行则停止
+		if ok, err := p.process.Status(clusterName, levelName); err == nil && ok {
+			_ = p.process.Stop(clusterName, levelName)
+		}
+		levelPath := filepath.Join(basePath, levelName)
+		_ = fileUtils.DeleteDir(filepath.Join(levelPath, "backup"))
+		_ = fileUtils.DeleteDir(filepath.Join(levelPath, "save"))
+		_ = fileUtils.DeleteDir(filepath.Join(levelPath, "server_chat_log.txt"))
+		_ = fileUtils.DeleteDir(filepath.Join(levelPath, "server_log.txt"))
+	}
+
+	response.OkWithMessage("清理世界成功", ctx)
+}
+
+// CleanAllLevel 清理全部世界存档
+// @Summary 清理全部世界存档
+// @Description 清理全部世界存档（save, backup, 日志）
+// @Tags game
+// @Accept json
+// @Produce json
+// @Success 200 {object} response.Response
+// @Router /api/game/clean/level/all [get]
+func (p *GameHandler) CleanAllLevel(ctx *gin.Context) {
+	clusterName := context.GetClusterName(ctx)
+	basePath := p.archive.ClusterPath(clusterName)
+
+	config, err := p.levelConfigUtils.GetLevelConfig(clusterName)
+	if err != nil {
+		response.FailWithMessage("获取关卡配置失败: "+err.Error(), ctx)
+		return
+	}
+
+	for i := range config.LevelList {
+		levelName := config.LevelList[i].File
+		levelName = strings.TrimSpace(levelName)
+		if levelName == "" || levelName == "." || levelName == ".." || strings.Contains(levelName, "/") || strings.Contains(levelName, "\\") {
+			continue
+		}
+		if ok, err := p.process.Status(clusterName, levelName); err == nil && ok {
+			_ = p.process.Stop(clusterName, levelName)
+		}
+		levelPath := filepath.Join(basePath, levelName)
+		_ = fileUtils.DeleteDir(filepath.Join(levelPath, "backup"))
+		_ = fileUtils.DeleteDir(filepath.Join(levelPath, "save"))
+		_ = fileUtils.DeleteDir(filepath.Join(levelPath, "server_chat_log.txt"))
+		_ = fileUtils.DeleteDir(filepath.Join(levelPath, "server_log.txt"))
+	}
+
+	response.OkWithMessage("清理全部世界成功", ctx)
+}
+

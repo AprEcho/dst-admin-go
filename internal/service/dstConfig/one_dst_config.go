@@ -162,10 +162,10 @@ func (o *OneDstConfig) GetDstConfig(clusterName string) (DstConfig, error) {
 		dstConfig.Cluster = "MyDediServer"
 	}
 	if dstConfig.Backup == "" {
-		dstConfig.Backup = "/app/backup"
+		dstConfig.Backup = filepath.Join(config.Cfg.DataDir, "backup")
 	}
 	if dstConfig.Mod_download_path == "" {
-		dstConfig.Mod_download_path = "/app/mod"
+		dstConfig.Mod_download_path = filepath.Join(config.Cfg.DataDir, "mods")
 	}
 	if dstConfig.Steamcmd == "" {
 		dstConfig.Steamcmd = "/app/steamcmd"

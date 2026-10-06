@@ -1495,7 +1495,7 @@ func (s *ModService) DownloadWorkshopMods(clusterName string, modIds []string) e
 	return cmdErr
 }
 
-// EnsureLevelModsDownloaded 确保指定世界中启用的所有模组在本地已下载
+// EnsureLevelModsDownloaded 确保指定世界中启用的所有模组在本地已下载，并保证 dedicated_server_mods_setup.lua 清单同步
 func (s *ModService) EnsureLevelModsDownloaded(clusterName, levelName string) error {
 	modoverridesPath := s.pathResolver.ModoverridesPath(clusterName, levelName)
 	if !fileUtils.Exists(modoverridesPath) {
@@ -1506,6 +1506,30 @@ func (s *ModService) EnsureLevelModsDownloaded(clusterName, levelName string) er
 		return nil
 	}
 	workshopIds := dstUtils.EnabledWorkshopIds(content)
+
+	// 开服前同步 dedicated_server_mods_setup.lua，确保未启用的模组从启动清单中彻底剔除
+	if cfg, err := s.dstConfig.GetDstConfig(clusterName); err == nil {
+		clusterDir := filepath.Join(s.pathResolver.KleiBasePath(clusterName), clusterName)
+		var allModoverrides []string
+		if entries, readErr := os.ReadDir(clusterDir); readErr == nil {
+			for _, entry := range entries {
+				if entry.IsDir() {
+					moPath := filepath.Join(clusterDir, entry.Name(), "modoverrides.lua")
+					if fileUtils.Exists(moPath) {
+						if moContent, moErr := fileUtils.ReadFile(moPath); moErr == nil && moContent != "" {
+							allModoverrides = append(allModoverrides, moContent)
+						}
+					}
+				}
+			}
+		}
+		if len(allModoverrides) > 0 {
+			_ = dstUtils.SyncDedicatedServerModsSetup(cfg, allModoverrides...)
+		} else {
+			_ = dstUtils.SyncDedicatedServerModsSetup(cfg, content)
+		}
+	}
+
 	if len(workshopIds) == 0 {
 		return nil
 	}

@@ -179,16 +179,20 @@ func (h *PreinstallHandler) UsePreinstall(ctx *gin.Context) {
 	if err == nil {
 		entries, err := os.ReadDir(clusterPath)
 		if err == nil {
+			var modContents []string
 			for _, entry := range entries {
 				if entry.IsDir() {
 					modPath := filepath.Join(clusterPath, entry.Name(), "modoverrides.lua")
 					if fileUtils.Exists(modPath) {
 						modContent, _ := fileUtils.ReadFile(modPath)
 						if modContent != "" {
-							_ = dstUtils.DedicatedServerModsSetup(dstCfg, modContent)
+							modContents = append(modContents, modContent)
 						}
 					}
 				}
+			}
+			if len(modContents) > 0 {
+				_ = dstUtils.SyncDedicatedServerModsSetup(dstCfg, modContents...)
 			}
 		}
 	}

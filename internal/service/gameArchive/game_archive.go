@@ -138,7 +138,7 @@ func (d *GameArchive) GetGameArchive(clusterName string) GameArchiveInfo {
 		if err != nil {
 			gameArchie.Mods = 0
 		} else {
-			gameArchie.Mods = len(dstUtils.WorkshopIds(masterModoverrides))
+			gameArchie.Mods = len(dstUtils.EnabledWorkshopIds(masterModoverrides))
 		}
 	}()
 

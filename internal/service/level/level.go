@@ -161,16 +161,37 @@ func (l *LevelService) GetServerIni(filepath string, isMaster bool) levelConfig.
 
 // UpdateLevels 更新多个关卡配置
 func (l *LevelService) UpdateLevels(clusterName string, levels []levelConfig.LevelInfo) error {
+	config, _ := l.dstConfig.GetDstConfig(clusterName)
+	var modConfigs []string
 	for i := range levels {
-		config, _ := l.dstConfig.GetDstConfig(clusterName)
-		dstUtils.DedicatedServerModsSetup(config, levels[i].Modoverrides)
+		modConfigs = append(modConfigs, levels[i].Modoverrides)
 		err := l.UpdateLevel(clusterName, &levels[i])
 		if err != nil {
 			return err
 		}
 	}
 
+	// 统一同步当前集群所有活跃世界的启用模组，未启用的模组自动从 dedicated_server_mods_setup.lua 中剔除
+	_ = dstUtils.SyncDedicatedServerModsSetup(config, modConfigs...)
+
 	return nil
+}
+
+// SyncClusterModsSetup 同步集群下所有世界实际启用的模组到 dedicated_server_mods_setup.lua
+func (l *LevelService) SyncClusterModsSetup(clusterName string) error {
+	levels, err := l.GetLevelList(clusterName)
+	if err != nil {
+		return err
+	}
+	config, err := l.dstConfig.GetDstConfig(clusterName)
+	if err != nil {
+		return err
+	}
+	var modConfigs []string
+	for _, lvl := range levels {
+		modConfigs = append(modConfigs, lvl.Modoverrides)
+	}
+	return dstUtils.SyncDedicatedServerModsSetup(config, modConfigs...)
 }
 
 // UpdateLevel 更新单个关卡配置

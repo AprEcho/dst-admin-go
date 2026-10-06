@@ -381,7 +381,7 @@ func (p *GameConfig) SaveConfig(clusterName string, homeConfig HomeConfigVO) {
 			fileUtils.WriterTXT(filepath.Join(clusterPath, config.LevelList[i].File, "modoverrides.lua"), modConfig)
 		}
 		var serverModSetup = ""
-		workshopIds := dstUtils.WorkshopIds(modConfig)
+		workshopIds := dstUtils.EnabledWorkshopIds(modConfig)
 		for _, workshopId := range workshopIds {
 			serverModSetup += "ServerModSetup(\"" + workshopId + "\")\n"
 		}

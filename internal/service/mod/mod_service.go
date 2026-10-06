@@ -1458,7 +1458,7 @@ func (s *ModService) DownloadWorkshopMods(clusterName string, modIds []string) e
 	for _, id := range modIds {
 		id = strings.TrimSpace(id)
 		if id != "" {
-			downloadArgs = append(downloadArgs, "+workshop_download_item 322330 "+id+" validate")
+			downloadArgs = append(downloadArgs, "+workshop_download_item 322330 "+id)
 		}
 	}
 	if len(downloadArgs) == 0 {

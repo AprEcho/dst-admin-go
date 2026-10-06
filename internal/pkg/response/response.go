@@ -38,6 +38,15 @@ func OkWithMessage(message string, ctx *gin.Context) {
 	})
 }
 
+// OkWithDetailed 成功响应带数据和自定义消息
+func OkWithDetailed(data interface{}, message string, ctx *gin.Context) {
+	ctx.JSON(http.StatusOK, Response{
+		Code: 200,
+		Msg:  message,
+		Data: data,
+	})
+}
+
 // FailWithMessage 失败响应带消息
 func FailWithMessage(message string, ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, Response{

@@ -19,7 +19,7 @@ permissions:
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/dst-admin-go
-  FRONTEND_REPO: ${{ vars.FRONTEND_REPO || 'carrot-hu23/dst-manage-web2' }}
+  FRONTEND_REPO: ${{ vars.FRONTEND_REPO || 'AprEcho/dst-manage-web' }}
   FRONTEND_REF: ${{ vars.FRONTEND_REF || 'main' }}
 
 jobs:

@@ -6,7 +6,10 @@ WORKDIR /web
 RUN apk add --no-cache git
 ARG FRONTEND_REPO=https://github.com/AprEcho/dst-manage-web.git
 ARG FRONTEND_REF=main
-RUN git clone --depth 1 -b ${FRONTEND_REF} ${FRONTEND_REPO} . && \
+# 每次前端更新时更新此 COMMIT_SHA，打破 Docker 镜像层缓存并拉取最新构建
+ARG FRONTEND_COMMIT_SHA=1ebf124
+RUN echo "Building frontend commit: ${FRONTEND_COMMIT_SHA}" && \
+    git clone --depth 1 -b ${FRONTEND_REF} ${FRONTEND_REPO} . && \
     npm config set registry https://registry.npmmirror.com && \
     npm ci && \
     npm run build
